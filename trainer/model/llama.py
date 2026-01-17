@@ -165,14 +165,15 @@ class LlamaMLP(nn.Module):
         self.config = config
         self.hidden_size = config.hidden_size
         self.intermediate_size = config.intermediate_size
+        mlp_bias = getattr(config, "mlp_bias", False)
         self.gate_proj = nn.Linear(
-            self.hidden_size, self.intermediate_size, bias=config.mlp_bias
+            self.hidden_size, self.intermediate_size, bias=mlp_bias
         )
         self.up_proj = nn.Linear(
-            self.hidden_size, self.intermediate_size, bias=config.mlp_bias
+            self.hidden_size, self.intermediate_size, bias=mlp_bias
         )
         self.down_proj = nn.Linear(
-            self.intermediate_size, self.hidden_size, bias=config.mlp_bias
+            self.intermediate_size, self.hidden_size, bias=mlp_bias
         )
         self.act_fn = ACT2FN[config.hidden_act]
 
@@ -326,7 +327,7 @@ class LlamaDecoderLayer(GradientCheckpointingLayer):
         self.interventions_config = interventions_config
         self.self_attn = LlamaAttention(config=config, layer_idx=layer_idx)
         self.intervention = interventions_utils.build_intervention(
-            interventions_config=interventions_config,
+            icfg=self.interventions_config,
             layer_idx=layer_idx,
             hidden_size=config.hidden_size,
         )

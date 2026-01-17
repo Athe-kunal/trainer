@@ -1,6 +1,7 @@
 import pydantic
 import torch
 import torch.nn as nn
+import configmate
 from typing import Annotated, Literal, Self, cast
 from trainer.model import interventions
 
@@ -132,3 +133,11 @@ def build_intervention(
         init_orth=icfg.init_orth,
     )
     return cast(torch.nn.Module, mod)
+
+
+def read_config_from_yaml(path: str) -> InterventionsConfig:
+    assert path.endswith(".yaml"), f"Config path must end with .yaml, got: {path}"
+    config = configmate.get_config(
+        path, section="InterventionsConfig", validation=InterventionsConfig
+    )
+    return config

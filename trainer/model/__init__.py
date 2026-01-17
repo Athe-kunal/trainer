@@ -4,7 +4,7 @@ from .interventions import (
     DireftIntervention,
     NodireftIntervention,
 )
-from .interventions_config import InterventionsConfig
+from .interventions_utils import InterventionsConfig
 
 __all__ = [
     "LowRankRotateLayer",
