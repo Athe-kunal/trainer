@@ -1,0 +1,210 @@
+from typing import ContextManager, Any
+import configmate
+from accelerate import init_empty_weights
+import torch
+from torch.nn.utils import clip_grad_norm_
+import torch.distributed as dist
+from torch.distributed.fsdp._runtime_utils import _lazy_init
+import torch.distributed.checkpoint as dcp
+from torch.distributed.checkpoint.state_dict import (
+    StateDictOptions,
+    get_model_state_dict,
+)
+from transformers import get_scheduler
+from trainer.workers.base import BaseWorker
+
+from trainer.workers.fsdp import data_parallelism
+
+
+# https://gkavya.in/pytorch-parallelism/
+class FSDPWorker(BaseWorker):
+    def __init__(self, config: dict, train: bool):
+        super().__init__(config, train)
+        world_size = dist.get_world_size()
+        assert (
+            world_size % (config.ddp_size * config.tp_size) == 0
+        ), f"{world_size=} must be divisible by the ddp_size {config.ddp_size=} * {config.tp_size=}"
+
+        # There are three layers to the device mesh
+        # First layer is DDP where we have data parallelism
+        # Second is Tensor Parallelism, where we divide our model into different devices
+        self.model_device_mesh = dist.device_mesh.init_device_mesh(
+            "cuda",
+            mesh_dim_names=("ddp", "fsdp", "tp"),
+            mesh_shape=(
+                config.ddp_size,
+                # remaining dimension for FSDP
+                # FSDP shard the weight parameters, there are decoder layer concepts here
+                world_size // (config.ddp_size * config.tp_size),
+                config.tp_size,
+            ),
+        )
+
+        assert (
+            world_size % (config.cp_size * config.tp_size) == 0
+        ), f"{world_size=} must be divisible by {config.cp_size=} * {config.tp_size=}."
+
+        self.device_mesh = dist.device_mesh.init_device_mesh(
+            "cuda",
+            mesh_dim_names=("dp", "cp", "tp"),
+            mesh_shape=(
+                # number of data parallel replicas
+                world_size // (config.cp_size * config.tp_size),
+                # Attention uses ring / all-to-all communication across CP ranks
+                # For 32K sequence length, if we have cp_size = 4, then each GPU handles 8K
+                config.cp_size,
+                config.tp_size,
+            ),
+        )
+
+    def _init_weight_context(self) -> ContextManager:
+        if any(
+            [
+                dist.get_rank() == 0,
+                self.device_mesh["tp"].size() > 1
+                and self.device_mesh["tp"].get_local_rank() == 0,
+                getattr(self.config, "offload_model", False),
+            ]
+        ):
+            return torch.device("cpu")
+        return init_empty_weights()
+
+    def _prepare_model_optimizer(self):
+        if self.train and self.config.enable_gradient_checkpointing:
+            self.model.grad_checkpointing_enable()
+        if self.config.tp_size > 1:
+            prepare_tp_model(self.model, self.model_device_mesh["tp"])
+
+        self.model = data_parallelism.prepare_dp_model(
+            self.model,
+            self.config.dtype,
+            self.config.tp_size == 1,
+            self.model_device_mesh["ddp", "fsdp"],
+        )
+
+        if self.train:
+            optimizer_config = self.config["optimizer"]
+            self.optimizer = torch.optim.AdamW(
+                self.model.parameters(), **optimizer_config
+            )
+        self._load_model_to_device("cpu")
+
+    def prepare_scheduler(self, total_steps: int) -> None:
+        num_training_steps = total_steps * getattr(self.config, "update_per_rollout", 1)
+        scheduler_config = self.config["scheduler"]
+        scheduler_name = scheduler_config.pop("name")
+        num_warmup_steps = int(
+            scheduler_config.pop("warmup_ratio") * num_training_steps
+        )
+        self.scheduler = get_scheduler(
+            scheduler_name,
+            self.optimizer,
+            num_warmup_steps=num_warmup_steps,
+            num_training_steps=num_training_steps,
+            scheduler_specific_kwargs=scheduler_config,
+        )
+
+    def _scatter_data(
+        self,
+        tensor_dict: dict[str, torch.Tensor],
+        pack_minibatches: bool = False,
+        pair: bool = False,
+    ) -> list[dict[str, torch.Tensor]] | list[list[dict[str, torch.Tensor]]]:
+        max_length_per_dp = (
+            self.device_mesh["cp"].size()
+            * self.device_mesh["tp"].size()
+            * (
+                self.config.max_length_per_device
+                if torch.is_grad_enabled()
+                else self.config.max_inference_length_per_device
+            )
+        )
+        return scatter_data(
+            tensor_dict,
+            self.device_mesh["dp"].get_group(),
+            self.device_mesh["dp"].size(),
+            max_length_per_dp,
+            self.config.update_per_rollout if pack_minibatches else None,
+            pair,
+        )
+
+    def _gather_data(
+        self, minibatches: list[dict[str, torch.Tensor]]
+    ) -> dict[str, torch.Tensor] | None:
+        return gather_data(minibatches, self.device_mesh["dp"].get_group())
+
+    def _load_model_to_device(self, device: torch.device | str):
+        # This function loads offloaded data from CPU to GPU
+        # If no offload, then return
+        if not getattr(self.config, "offload_model", False):
+            return
+
+        torch.cuda.empty_cache()
+        _lazy_init(self.model, self.model)
+        for handle in self.model._all_handles:
+            if handle._offload_params:
+                continue
+            flat_param = handle.flat_param
+            # non_blocking=True allows async copies if the source memory is pinned and the copy can be scheduled asynchronously.
+            handle.flat_param_to(device, non_blocking=True)
+            flat_param._local_shard = flat_param.data
+        torch.cuda.empty_cache()
+
+    def _load_optimizer_to_device(self, device: torch.device | str) -> None:
+        if not getattr(self.config, "offload_optimizer", False):
+            return
+
+        for param_group in self.optimizer.param_groups:
+            for param in param_group["params"]:
+                state = self.optimizer.state[param]
+                for key, value in state.items():
+                    if isinstance(value, torch.Tensor):
+                        state[key] = value.to(device, non_blocking=True)
+
+    def _scale_loss(self, loss: torch.Tensor) -> torch.Tensor:
+        # https://github.com/ChenmienTan/RL2/issues/11
+        return self.device_mesh["dp"].size() * self.config.cp_size * loss
+
+    def _optimizer_step(self) -> int:
+        params_to_train = [p for g in self.optimizer.param_groups for p in g["params"]]
+        grad_norm = clip_grad_norm_(params_to_train, max_norm=self.config.max_grad_norm)
+        self.optimizer.step()
+        self.optimizer.zero_grad()
+        self._load_optimizer_to_device("cpu")
+        self.scheduler.step()
+        return grad_norm.item()
+
+    def _get_model_state_dict(self, full_state_dict: bool = False) -> dict[str, Any]:
+
+        options = StateDictOptions(full_state_dict=full_state_dict, cpu_offload=True)
+        self._load_model_to_device(torch.cuda.current_device())
+        state_dict = get_model_state_dict(self.model, options=options)
+        self._load_model_to_device("cpu")
+        return state_dict
+
+    def _get_ckpt(self) -> dict[str, dict[str, Any]]:
+        return {
+            "optimizer": self.optimizer.state_dict(),
+            "scheduler": self.scheduler.state_dict(),
+        }
+
+    def load_ckpt(self, checkpoint_id: str):
+
+        ckpt = self._get_ckpt()
+        dcp.load(ckpt, checkpoint_id=checkpoint_id)
+        self.optimizer.load_state_dict(ckpt["optimizer"])
+        self.scheduler.load_state_dict(ckpt["scheduler"])
+
+    def save_ckpt(self, save_dir: str) -> None:
+        self.save_model(f"{save_dir}/model")
+        dcp.save(self._get_ckpt(), checkpoint_id=f"{save_dir}/optimizer_scheduler")
+
+    def save_model(self, save_dir: str):
+
+        state_dict = self._get_model_state_dict(full_state_dict=True)
+        if dist.get_rank() == 0:
+
+            self.tokenizer.save_pretrained(save_dir)
+            self.model.module.save_pretrained(save_dir, state_dict=state_dict)
+
+        dist.barrier()

@@ -1,0 +1,180 @@
+from typing import Any, Literal, Callable
+import os
+import time
+import json
+import socket
+import asyncio
+import aiohttp
+import requests
+import functools
+from datetime import timedelta
+import torch
+import torch.distributed as dist
+
+
+def get_host() -> str:
+    hostname = socket.gethostname()
+    return socket.gethostbyname(hostname)
+
+
+def get_available_port() -> int:
+
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(("", 0))
+        s.listen(1)
+        return s.getsockname()[1]
+
+
+def initialize_global_process_group(
+    create_gloo_group: bool = False, timeout_second: int = 36_000
+) -> None:
+    dist.init_process_group("nccl", timeout=timedelta(seconds=timeout_second))
+    local_rank = int(os.environ["LOCAL_RANK"])
+    torch.cuda.set_device(local_rank)
+
+    if create_gloo_group:
+        world_size = dist.get_world_size()
+        global GLOO_GROUP
+        GLOO_GROUP = dist.new_group(
+            ranks=list(range(world_size)),
+            timeout=timedelta(seconds=timeout_second),
+            backend="gloo",
+        )
+
+
+def get_gloo_group():
+    return GLOO_GROUP
+
+
+def _unwrap_process_group(process_group: dist.ProcessGroup) -> dist.ProcessGroup:
+    if hasattr(process_group, "group"):
+        return process_group.group
+    elif hasattr(process_group, "get_group"):
+        return process_group.get_group()
+    else:
+        return process_group
+
+
+def broadcast_object(
+    obj: Any | None,
+    src: Any | None,
+    process_group: dist.ProcessGroup | None = None,
+    group_src: int | None = None,
+) -> Any:
+    object_list = [obj]
+    dist.broadcast_object_list(
+        object_list,
+        src=src,
+        group=_unwrap_process_group(process_group),
+        group_src=group_src,
+    )
+    return object_list[0]
+
+
+def gather_and_concat_list(
+    lst: list[Any], process_group: dist.ProcessGroup
+) -> list[Any] | None:
+    # Initialize receiver list
+    lists = (
+        dist.get_world_size(process_group) * [None]
+        if dist.get_rank(process_group) == 0
+        else None
+    )
+    dist.gather_object(
+        lst, lists, group=_unwrap_process_group(process_group), group_dst=0
+    )
+    return (
+        [item for lst in lists for item in lst]
+        if dist.get_rank(process_group) == 0
+        else None
+    )
+
+
+def sync_request(
+    url: str,
+    endpoint: str,
+    method: Literal["POST", "GET"] = "POST",
+    max_trials: int = 3,
+    retry_delay: int = 1,
+    **kwargs,
+):
+
+    with requests.Session() as session:
+
+        for trial in range(max_trials):
+
+            try:
+
+                match method:
+                    case "POST":
+                        response = session.post(f"{url}/{endpoint}", **kwargs)
+                    case "GET":
+                        response = session.get(f"{url}/{endpoint}", **kwargs)
+
+                response.raise_for_status()
+                try:
+                    return response.json()
+                except json.decoder.JSONDecodeError:
+                    return response.text
+
+            except:
+                if trial == max_trials - 1:
+                    raise
+                time.sleep(retry_delay)
+            finally:
+                pass
+
+
+def with_session(func: Callable) -> Callable:
+
+    @functools.wraps(func)
+    async def wrapper(*args, **kwargs) -> Callable:
+        global SESSION
+        SESSION = aiohttp.ClientSession(
+            connector=aiohttp.TCPConnector(limit=0),
+            timeout=aiohttp.ClientTImeout(total=None),
+        )
+
+        try:
+            return await func(*args, **kwargs)
+        finally:
+            await SESSION.close()
+
+    return wrapper
+
+
+async def async_request(
+    url: str | list[str],
+    endpoint: str,
+    method: Literal["POST", "GET"] = "POST",
+    max_trials: int = 3,
+    retry_delay: int = 1,
+    **kwargs,
+):
+    if isinstance(url, list):
+        return asyncio.gather(
+            *(async_request(u, endpoint, method, **kwargs) for u in url)
+        )
+
+    for trial in range(max_trials):
+
+        try:
+
+            match method:
+                case "POST":
+                    req_ctx = SESSION.post(f"{url}/{endpoint}", **kwargs)
+                case "GET":
+                    req_ctx = SESSION.get(f"{url}/{endpoint}", **kwargs)
+
+            async with req_ctx as response:
+                response.raise_for_status()
+                try:
+                    return await response.json(content_type=None)
+                except json.decoder.JSONDecodeError:
+                    return await response.text()
+
+        except:
+
+            if trial == max_trials - 1:
+                raise
+            await asyncio.sleep(retry_delay)

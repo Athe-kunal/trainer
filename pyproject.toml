@@ -5,11 +5,16 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
+    "accelerate>=1.12.0",
     "configmate[standard]>=0.1.8",
     "datasets>=4.4.1",
     "ipykernel>=7.1.0",
+    "nvitop>=1.6.1",
     "pyvene>=0.1.8",
+    "ring-flash-attn>=0.1.8",
     "sglang>=0.5.2",
+    "sympy>=1.14.0",
     "transformers>=4.57.5",
     "vllm>=0.13.0",
+    "wandb>=0.24.0",
 ]
