@@ -1,4 +1,5 @@
-from typing import ContextManager, Any, Union
+from typing import ContextManager, Dict, Union, List, Optional, Any
+from omegaconf import OmegaConf, DictConfig
 from accelerate import init_empty_weights
 import torch
 from torch.nn.utils import clip_grad_norm_
@@ -11,41 +12,25 @@ from torch.distributed.checkpoint.state_dict import (
 )
 from transformers import get_scheduler
 from trainer.workers.base import BaseWorker
-from trainer.distributed_utils.sequences import scatter_data, gather_data
-from trainer.datamodels import (
-    ActorConfig,
-    CriticConfig,
-    RefActorConfig,
-    BaseWorkerConfig,
-)
-
-from trainer.workers.fsdp import data_parallelism
-from trainer.workers.fsdp import tensor_parallelism
+from trainer.utils.fsdp.data_parallelism import prepare_dp_model
+from trainer.utils.fsdp.tensor_parallelism import prepare_tp_model
+from trainer.utils.sequences import scatter_data, gather_data
 
 
-# https://gkavya.in/pytorch-parallelism/
 class FSDPWorker(BaseWorker):
-    def __init__(
-        self,
-        config: Union[ActorConfig, CriticConfig, RefActorConfig, BaseWorkerConfig],
-        train: bool,
-    ):
+
+    def __init__(self, config: DictConfig, train: bool):
         super().__init__(config, train)
+
         world_size = dist.get_world_size()
         assert (
             world_size % (config.ddp_size * config.tp_size) == 0
-        ), f"{world_size=} must be divisible by the ddp_size {config.ddp_size=} * {config.tp_size=}"
-
-        # There are three layers to the device mesh
-        # First layer is DDP where we have data parallelism
-        # Second is Tensor Parallelism, where we divide our model into different devices
+        ), f"World_size {world_size} must be divisible by ddp_size {config.ddp_size} * tp_size {config.tp_size}."
         self.model_device_mesh = dist.device_mesh.init_device_mesh(
             "cuda",
             mesh_dim_names=("ddp", "fsdp", "tp"),
             mesh_shape=(
                 config.ddp_size,
-                # remaining dimension for FSDP
-                # FSDP shard the weight parameters, there are decoder layer concepts here
                 world_size // (config.ddp_size * config.tp_size),
                 config.tp_size,
             ),
@@ -53,42 +38,40 @@ class FSDPWorker(BaseWorker):
 
         assert (
             world_size % (config.cp_size * config.tp_size) == 0
-        ), f"{world_size=} must be divisible by {config.cp_size=} * {config.tp_size=}."
-
+        ), f"World_size {world_size} must be divisible by cp_size {config.cp_size} * tp_size {config.tp_size}."
         self.device_mesh = dist.device_mesh.init_device_mesh(
             "cuda",
             mesh_dim_names=("dp", "cp", "tp"),
             mesh_shape=(
-                # number of data parallel replicas
                 world_size // (config.cp_size * config.tp_size),
-                # Attention uses ring / all-to-all communication across CP ranks
-                # For 32K sequence length, if we have cp_size = 4, then each GPU handles 8K
                 config.cp_size,
                 config.tp_size,
             ),
         )
 
-    def _init_weight_context(self) -> ContextManager:
+    def _init_weight_context(self, use_meta_tensor: bool = True) -> ContextManager:
+        # TODO: why offloading is incompatible with initialization on meta device?
         if any(
             [
                 dist.get_rank() == 0,
                 self.device_mesh["tp"].size() > 1
                 and self.device_mesh["tp"].get_local_rank() == 0,
                 getattr(self.config, "offload_model", False),
+                not use_meta_tensor,
             ]
         ):
             return torch.device("cpu")
         return init_empty_weights()
 
     def _prepare_model_optimizer(self):
-        if self.train and self.config.enable_gradient_checkpointing:
-            self.model.grad_checkpointing_enable()
-        if self.config.tp_size > 1:
-            tensor_parallelism.prepare_tp_model(
-                self.model, self.model_device_mesh["tp"]
-            )
 
-        self.model = data_parallelism.prepare_dp_model(
+        if self.train and self.config.enable_gradient_checkpointing:
+            self.model.gradient_checkpointing_enable()
+
+        if self.config.tp_size > 1:
+            prepare_tp_model(self.model, self.model_device_mesh["tp"])
+
+        self.model = prepare_dp_model(
             self.model,
             self.config.dtype,
             self.config.tp_size == 1,
@@ -96,58 +79,37 @@ class FSDPWorker(BaseWorker):
         )
 
         if self.train:
-            # Support both dataclass and dict config for optimizer
-            if hasattr(self.config, "optimizer"):
-                optimizer_config = self.config.optimizer
-                if hasattr(optimizer_config, "__dataclass_fields__"):
-                    # Convert dataclass to dict
-                    from dataclasses import asdict
 
-                    optimizer_config = asdict(optimizer_config)
-                elif hasattr(optimizer_config, "to_dict"):
-                    optimizer_config = optimizer_config.to_dict()
-            else:
-                optimizer_config = self.config.get("optimizer", {})
+            optimizer_config = OmegaConf.to_container(self.config.optimizer)
             self.optimizer = torch.optim.AdamW(
                 self.model.parameters(), **optimizer_config
             )
+
         self._load_model_to_device("cpu")
 
-    def prepare_scheduler(self, total_steps: int) -> None:
-        num_training_steps = total_steps * getattr(self.config, "update_per_rollout", 1)
-        # Support both dataclass and dict config for scheduler
-        if hasattr(self.config, "scheduler"):
-            scheduler_config = self.config.scheduler
-            if hasattr(scheduler_config, "__dataclass_fields__"):
-                scheduler_name = scheduler_config.name
-                warmup_ratio = scheduler_config.warmup_ratio
-                scheduler_kwargs = {}
-            else:
-                scheduler_config = dict(scheduler_config)
-                scheduler_name = scheduler_config.pop("name")
-                warmup_ratio = scheduler_config.pop("warmup_ratio")
-                scheduler_kwargs = scheduler_config
-        else:
-            scheduler_config = dict(self.config.get("scheduler", {}))
-            scheduler_name = scheduler_config.pop("name", "cosine")
-            warmup_ratio = scheduler_config.pop("warmup_ratio", 0.1)
-            scheduler_kwargs = scheduler_config
+    def prepare_scheduler(self, total_steps: int):
 
-        num_warmup_steps = int(warmup_ratio * num_training_steps)
+        num_training_steps = total_steps * getattr(self.config, "update_per_rollout", 1)
+        scheduler_config = OmegaConf.to_container(self.config.scheduler)
+        scheduler_name = scheduler_config.pop("name")
+        num_warmup_steps = int(
+            scheduler_config.pop("warmup_ratio") * num_training_steps
+        )
         self.scheduler = get_scheduler(
             scheduler_name,
             self.optimizer,
             num_warmup_steps=num_warmup_steps,
             num_training_steps=num_training_steps,
-            scheduler_specific_kwargs=scheduler_kwargs,
+            scheduler_specific_kwargs=scheduler_config,
         )
 
     def _scatter_data(
         self,
-        tensor_dict: dict[str, torch.Tensor],
+        tensor_dict: Dict[str, torch.Tensor],
         pack_minibatches: bool = False,
         pair: bool = False,
-    ) -> list[dict[str, torch.Tensor]] | list[list[dict[str, torch.Tensor]]]:
+    ) -> Union[List[Dict[str, torch.Tensor]], List[List[Dict[str, torch.Tensor]]]]:
+
         max_length_per_dp = (
             self.device_mesh["cp"].size()
             * self.device_mesh["tp"].size()
@@ -167,13 +129,13 @@ class FSDPWorker(BaseWorker):
         )
 
     def _gather_data(
-        self, minibatches: list[dict[str, torch.Tensor]]
-    ) -> dict[str, torch.Tensor] | None:
+        self, minibatches: List[Dict[str, torch.Tensor]]
+    ) -> Optional[Dict[str, torch.Tensor]]:
         return gather_data(minibatches, self.device_mesh["dp"].get_group())
 
-    def _load_model_to_device(self, device: torch.device | str):
-        # This function loads offloaded data from CPU to GPU
-        # If no offload, then return
+    # TODO: maybe simplify this function
+    def _load_model_to_device(self, device: Union[torch.device, str]):
+
         if not getattr(self.config, "offload_model", False):
             return
 
@@ -183,12 +145,12 @@ class FSDPWorker(BaseWorker):
             if handle._offload_params:
                 continue
             flat_param = handle.flat_param
-            # non_blocking=True allows async copies if the source memory is pinned and the copy can be scheduled asynchronously.
             handle.flat_param_to(device, non_blocking=True)
             flat_param._local_shard = flat_param.data
         torch.cuda.empty_cache()
 
-    def _load_optimizer_to_device(self, device: torch.device | str) -> None:
+    def _load_optimizer_to_device(self, device: Union[torch.device, str]):
+
         if not getattr(self.config, "offload_optimizer", False):
             return
 
@@ -204,15 +166,18 @@ class FSDPWorker(BaseWorker):
         return self.device_mesh["dp"].size() * self.config.cp_size * loss
 
     def _optimizer_step(self) -> int:
-        params_to_train = [p for g in self.optimizer.param_groups for p in g["params"]]
-        grad_norm = clip_grad_norm_(params_to_train, max_norm=self.config.max_grad_norm)
+
+        grad_norm = clip_grad_norm_(
+            self.model.parameters(), max_norm=self.config.max_grad_norm
+        )
+        self._load_optimizer_to_device(torch.cuda.current_device())
         self.optimizer.step()
         self.optimizer.zero_grad()
         self._load_optimizer_to_device("cpu")
         self.scheduler.step()
         return grad_norm.item()
 
-    def _get_model_state_dict(self, full_state_dict: bool = False) -> dict[str, Any]:
+    def _get_model_state_dict(self, full_state_dict: bool = False) -> Dict[str, Any]:
 
         options = StateDictOptions(full_state_dict=full_state_dict, cpu_offload=True)
         self._load_model_to_device(torch.cuda.current_device())
@@ -220,7 +185,7 @@ class FSDPWorker(BaseWorker):
         self._load_model_to_device("cpu")
         return state_dict
 
-    def _get_ckpt(self) -> dict[str, dict[str, Any]]:
+    def _get_ckpt(self) -> Dict[str, Dict[str, Any]]:
         return {
             "optimizer": self.optimizer.state_dict(),
             "scheduler": self.scheduler.state_dict(),
@@ -233,7 +198,8 @@ class FSDPWorker(BaseWorker):
         self.optimizer.load_state_dict(ckpt["optimizer"])
         self.scheduler.load_state_dict(ckpt["scheduler"])
 
-    def save_ckpt(self, save_dir: str) -> None:
+    def save_ckpt(self, save_dir: str):
+
         self.save_model(f"{save_dir}/model")
         dcp.save(self._get_ckpt(), checkpoint_id=f"{save_dir}/optimizer_scheduler")
 

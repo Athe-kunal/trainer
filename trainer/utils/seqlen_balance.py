@@ -15,7 +15,6 @@
 from typing import List, Tuple
 import heapq
 
-
 def karmarkar_karp(seqlen_list: List[int], k_partitions: int, equal_size: bool):
     # see: https://en.wikipedia.org/wiki/Largest_differencing_method
     class Set:
@@ -97,9 +96,7 @@ def karmarkar_karp(seqlen_list: List[int], k_partitions: int, equal_size: bool):
     sorted_seqlen_list = sorted([(seqlen, i) for i, seqlen in enumerate(seqlen_list)])
     states_pq = []
     if equal_size:
-        assert (
-            len(seqlen_list) % k_partitions == 0
-        ), f"{len(seqlen_list)} % {k_partitions} != 0"
+        assert len(seqlen_list) % k_partitions == 0, f"{len(seqlen_list)} % {k_partitions} != 0"
         for offset in range(0, len(sorted_seqlen_list), k_partitions):
             items = []
             for i in range(k_partitions):
@@ -121,16 +118,12 @@ def karmarkar_karp(seqlen_list: List[int], k_partitions: int, equal_size: bool):
     partitions = final_state.get_partitions()
     if equal_size:
         for i, partition in enumerate(partitions):
-            assert len(partition) * k_partitions == len(
-                seqlen_list
-            ), f"{len(partition)} * {k_partitions} != {len(seqlen_list)}"
+            assert len(partition) * \
+                k_partitions == len(seqlen_list), f"{len(partition)} * {k_partitions} != {len(seqlen_list)}"
     return partitions
 
-
-def get_seqlen_balanced_partitions(
-    seqlen_list: List[int], k_partitions: int, equal_size: bool
-):
-    """get order of seq lengths to make partitions balanced, this is
+def get_seqlen_balanced_partitions(seqlen_list: List[int], k_partitions: int, equal_size: bool):
+    """ get order of seq lengths to make partitions balanced, this is
         used in balacing sum of seqlength across dp ranks and microbatches
     Parameters:
         seqlen_list (List[int]):
@@ -145,9 +138,7 @@ def get_seqlen_balanced_partitions(
         partitions (List[List[int]]):
             return k_partitions list containing the index of items.
     """
-    assert (
-        len(seqlen_list) >= k_partitions
-    ), f"number of items:[{len(seqlen_list)}] < k_partitions:[{k_partitions}]"
+    assert len(seqlen_list) >= k_partitions, f"number of items:[{len(seqlen_list)}] < k_partitions:[{k_partitions}]"
 
     def _check_and_sort_partitions(partitions):
         assert len(partitions) == k_partitions, f"{len(partitions)} != {k_partitions}"
@@ -161,7 +152,5 @@ def get_seqlen_balanced_partitions(
         assert seen_idx == set(range(len(seqlen_list)))
         return sorted_partitions
 
-    partitions = karmarkar_karp(
-        seqlen_list=seqlen_list, k_partitions=k_partitions, equal_size=equal_size
-    )
+    partitions = karmarkar_karp(seqlen_list=seqlen_list, k_partitions=k_partitions, equal_size=equal_size)
     return _check_and_sort_partitions(partitions)

@@ -1,29 +1,25 @@
 from typing import Dict, Optional
+from omegaconf import DictConfig
 from collections import defaultdict
 import torch
 from transformers import AutoModelForTokenClassification
 from trainer.workers.fsdp.base import FSDPWorker
-from trainer.distributed_utils.sequences import (
-    count_total,
-    slide_along_cp,
-    gather_along_cp,
-)
-from trainer.workers.fsdp.context_parallelism import update_ring_attn_params
-from trainer.distributed_utils.functions import aggregate_values
-from trainer.rl.algorithms import rm_loss, critic_ppo_loss
-from trainer.distributed_utils.logging import (
+from trainer.utils.sequences import count_total, slide_along_cp, gather_along_cp
+from trainer.utils.fsdp.context_parallelism import update_ring_attn_params
+from trainer.utils.functions import aggregate_values
+from trainer.utils.algorithms import rm_loss, critic_ppo_loss
+from trainer.utils.logging import (
     progress_bar,
     time_logger,
     gather_and_log,
     gather_and_reduce,
     rank0_log,
 )
-from trainer.datamodels import CriticConfig
 
 
 class FSDPCritic(FSDPWorker):
 
-    def __init__(self, config: CriticConfig):
+    def __init__(self, config: DictConfig):
         super().__init__(config, True)
 
         with self._init_weight_context():

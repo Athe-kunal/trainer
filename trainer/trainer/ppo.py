@@ -1,21 +1,18 @@
-from typing import Any, Union
 import hydra
+from omegaconf import DictConfig
 import asyncio
 import torch.distributed as dist
 from tqdm import trange
-from trainer.base_trainer import Trainer
-from trainer.workers.fsdp.actor import FSDPActor
-from trainer.workers.fsdp.critic import FSDPCritic
-from trainer.rollout import initialize_rollout, shutdown_processes_when_exit
+from trainer.trainer.base import Trainer
+from trainer.workers import initialize_actor, initialize_critic, initialize_rollout
 from trainer.workers.rollout import shutdown_processes_when_exit
-from trainer.distributed_utils.comm import initialize_global_process_group, with_session
-from trainer.rl.algorithms import compute_advantages
-from trainer.datamodels import PPOConfig, PPOWithCriticConfig
+from trainer.utils.communication import initialize_global_process_group, with_session
+from trainer.utils.algorithms import compute_advantages
 
 
 class PPOTrainer(Trainer):
 
-    def __init__(self, config: Union[PPOConfig, PPOWithCriticConfig, dict[str, Any]]):
+    def __init__(self, config: DictConfig):
         super().__init__(config)
 
         if not config.trainer.eval_only:
@@ -96,7 +93,7 @@ class PPOTrainer(Trainer):
 
 
 @hydra.main(config_path="config", config_name="ppo", version_base=None)
-def main(config: dict[str, Any]):
+def main(config: DictConfig):
 
     initialize_global_process_group(True)
 

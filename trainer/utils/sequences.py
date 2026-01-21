@@ -4,8 +4,8 @@ import torch
 import torch.nn.functional as F
 from torch.nn.utils.rnn import pad_sequence
 import torch.distributed as dist
-from trainer.distributed_utils.comm import broadcast_object, gather_and_concat_list
-from trainer.distributed_utils.seqlen_balance import get_seqlen_balanced_partitions
+from trainer.utils.communication import broadcast_object, gather_and_concat_list
+from trainer.utils.seqlen_balance import get_seqlen_balanced_partitions
 
 
 def _tensor_dict_to_minibatches(

@@ -1,32 +1,32 @@
-from typing import Dict, Optional
+from typing import Dict, Optional, Tuple, List
+from omegaconf import DictConfig
 from collections import defaultdict
 import torch
 from transformers import AutoModelForCausalLM
 from trainer.workers.fsdp.base import FSDPWorker
-from trainer.distributed_utils.sequences import (
+from trainer.utils.sequences import (
     count_total,
     gather_along_cp,
     slide_along_cp,
 )
-from trainer.workers.fsdp.context_parallelism import update_ring_attn_params
-from trainer.distributed_utils.functions import (
+from trainer.utils.fsdp.context_parallelism import update_ring_attn_params
+from trainer.utils.functions import (
     compute_logps_and_entropy,
     aggregate_values,
 )
-from trainer.rl.algorithms import dpo_loss, actor_ppo_loss
-from trainer.distributed_utils.logging import (
+from trainer.utils.algorithms import dpo_loss, actor_ppo_loss
+from trainer.utils.logging import (
     progress_bar,
     time_logger,
     gather_and_log,
     gather_and_reduce,
     rank0_log,
 )
-from trainer.datamodels import ActorConfig
 
 
 class FSDPActor(FSDPWorker):
 
-    def __init__(self, config: ActorConfig, train: bool):
+    def __init__(self, config: DictConfig, train: bool):
         super().__init__(config, train)
 
         if config.use_liger_kernel:

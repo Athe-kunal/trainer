@@ -1,16 +1,17 @@
-from typing import Any, Sequence, Union
+from typing import Dict, Any, Sequence
+from omegaconf import OmegaConf, DictConfig
 import glob
 import torch.distributed as dist
 import torch.distributed.checkpoint as dcp
 import wandb
 from trainer.workers.base import BaseWorker
-from trainer.datamodels import Config
 
 
 class Trainer:
 
-    def __init__(self, config: Union[Config, dict[str, Any]]):
+    def __init__(self, config: DictConfig):
 
+        OmegaConf.resolve(config)
         self.load_dir = config.trainer.load_ckpt_from
         if self.load_dir == "latest":
             load_dirs = glob.glob(f"{config.trainer.save_dir}/step*")
@@ -30,16 +31,17 @@ class Trainer:
         self.config = config
 
         if dist.get_rank() == 0:
+            print(OmegaConf.to_yaml(config))
             if config.trainer.use_wandb:
                 wandb.init(
                     project=config.trainer.project,
                     name=config.trainer.experiment_name,
-                    config=config,
+                    config=OmegaConf.to_container(config),
                 )
             else:
                 wandb.log = lambda *args, **kwargs: None
 
-    def _get_ckpt(self, step: int) -> dict[str, Any]:
+    def _get_ckpt(self, step: int) -> Dict[str, Any]:
 
         ckpt = {"step": step}
         if dist.get_rank() == 0:

@@ -5,15 +5,14 @@ import torch.distributed as dist
 import transformers
 from transformers.modeling_utils import ALL_ATTENTION_FUNCTIONS
 from transformers.modeling_flash_attention_utils import (
-    is_flash_attn_greater_or_equal_2_10,
+    is_flash_attn_greater_or_equal_2_10
 )
 from ring_flash_attn.zigzag_ring_flash_attn_varlen import (
-    zigzag_ring_flash_attn_varlen_func,
+    zigzag_ring_flash_attn_varlen_func
 )
 from ring_flash_attn.adapters.hf_adapter import flash_attention_forward
 
 DATA_PARAMS: Dict[str, Any] = {}
-
 
 def _flash_attention_forward(
     query_states: torch.Tensor,
@@ -35,18 +34,23 @@ def _flash_attention_forward(
     max_length_k: Optional[int] = None,
     target_dtype: Optional[torch.dtype] = None,
     attn_implementation: Optional[str] = None,
-    **kwargs,
+    **kwargs
 ) -> torch.Tensor:
     use_sliding_windows = (
-        sliding_window is not None and key_states.shape[1] > sliding_window
+        sliding_window is not None
+        and key_states.shape[1] > sliding_window
     )
     flash_kwargs = (
-        {"window_size": (sliding_window, sliding_window)} if use_sliding_windows else {}
+        {"window_size": (sliding_window, sliding_window)}
+        if use_sliding_windows
+        else {}
     )
 
     if is_flash_attn_greater_or_equal_2_10:
         if deterministic is None:
-            deterministic = os.environ.get("FLASH_ATTENTION_DETERMINISTIC", "0") == "1"
+            deterministic = (
+                os.environ.get("FLASH_ATTENTION_DETERMINISTIC", "0") == "1"
+            )
 
     flash_kwargs["deterministic"] = deterministic
     flash_kwargs["group"] = DATA_PARAMS["group"]
@@ -60,15 +64,11 @@ def _flash_attention_forward(
         dropout_p=dropout,
         softmax_scale=softmax_scale,
         causal=True,
-        **flash_kwargs,
+        **flash_kwargs
     )
 
-
-transformers.modeling_flash_attention_utils._flash_attention_forward = (
-    _flash_attention_forward
-)
+transformers.modeling_flash_attention_utils._flash_attention_forward = _flash_attention_forward
 ALL_ATTENTION_FUNCTIONS["flash_attention_2"] = flash_attention_forward
-
 
 def update_ring_attn_params(process_group: dist.ProcessGroup, cu_seqlens: torch.Tensor):
 

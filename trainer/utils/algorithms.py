@@ -1,23 +1,24 @@
-from typing import Any, Union
+from typing import Dict, Tuple, List
+from omegaconf import DictConfig
 import torch
 import torch.nn.functional as F
 import wandb
-from trainer.base_dataset import pack_tensor_dicts
-from trainer.distributed_utils.functions import aggregate_values
-from trainer.distributed_utils.logging import time_logger
-from trainer.datamodels import Config, ActorConfig, CriticConfig
+from trainer.datasets import pack_tensor_dicts
+from trainer.utils.functions import aggregate_values
+from trainer.utils.logging import time_logger
 
 
 def compute_approx_kl(
-    logps: torch.Tensor,
-    ref_logps: torch.Tensor,
-    estimator: str,
+    logps: torch.Tensor, ref_logps: torch.Tensor, estimator: str
 ) -> torch.Tensor:
+    # logps of non-action tokens are zeros (see `Actor.forward`)
+    # so their corresponding approx_kl will also be zero.
+
     log_ratio = logps - ref_logps
     if estimator == "k1":
         return log_ratio
     elif estimator == "k2":
-        return log_ratio.pow(2).mean()
+        return log_ratio.pow(2) / 2
     elif estimator == "k3":
         return log_ratio + torch.exp(-log_ratio) - 1
     else:
@@ -25,22 +26,19 @@ def compute_approx_kl(
 
 
 def _compute_gae(
-    tensor_dict: dict[str, torch.Tensor],
-    gamma: float,
-    lamda: float,
-) -> dict[str, torch.Tensor]:
-    # \delta_t = r_t + gamma * V(s_{t+1}) - V(s_t)
-    # pad the first value with 0
-    next_values = F.pad(tensor_dict["values"][:, 1:], (0, 1), value=0)
+    tensor_dict: Dict[str, torch.Tensor], gamma: float, lamda: float
+) -> Dict[str, torch.Tensor]:
+
+    # \delta_t = r_t + \gamma * V(s_{t+1}) - V(s_t)
+    next_values = F.pad(tensor_dict["old_values"][:, 1:], (0, 1), value=0)
     deltas = tensor_dict["rewards"] + gamma * next_values - tensor_dict["old_values"]
 
     # A_t = \delta_t + \gamma * \lambda * A_{t+1}
-    gae = 0
-    reversed_gae: list[torch.Tensor] = []
+    gae, reversed_gaes = 0, []
     for t in reversed(range(deltas.shape[-1])):
         gae = deltas[:, t] + gamma * lamda * gae
-        reversed_gae.append(gae)
-    gaes = torch.stack(reversed_gae[::-1], -1)
+        reversed_gaes.append(gae)
+    gaes = torch.stack(reversed_gaes[::-1], -1)
     returns = gaes + tensor_dict["old_values"]
 
     action_gaes = gaes[torch.where(tensor_dict["action_mask"])]
@@ -54,11 +52,11 @@ def _compute_gae(
 
 
 def _compute_reinforce_adv(
-    tensor_dict: dict[str, torch.Tensor],
+    tensor_dict: Dict[str, torch.Tensor],
     responses_per_prompt: int,
     global_norm: bool,
     norm_var: bool,
-) -> dict[str, torch.Tensor]:
+) -> Dict[str, torch.Tensor]:
 
     rewards = tensor_dict["rewards"].sum(-1).view(-1, responses_per_prompt)
 
@@ -66,24 +64,27 @@ def _compute_reinforce_adv(
         baseline = rewards.mean()
         std = rewards.std()
     else:
-        baseline = rewards.mean(1, keepdim=True)
-        std = rewards.std(1, keepdim=True)
+        baseline = rewards.mean(-1, keepdim=True)
+        std = rewards.std(-1, keepdim=True)
 
     advantages = rewards - baseline
     if norm_var:
-        advantages = advantages / (std + torch.finfo(advantages.dtype).eps)
+        advantages /= std + torch.finfo(advantages.dtype).eps
 
+    advantages = advantages.view(-1, 1) * tensor_dict["action_mask"]
     return {"advantages": advantages}
 
 
-@time_logger
+@time_logger("compute_advantages")
 def compute_advantages(
-    config: Union[Config, dict[str, Any]],
-    tensor_dict: dict[str, torch.Tensor],
+    config: DictConfig,
+    tensor_dict: Dict[str, torch.Tensor],
     cu_seqs: torch.Tensor,
     step: int,
-) -> None:
+):
+
     if config.actor.kl.coef > 0:
+
         old_ref_approx_kl = compute_approx_kl(
             tensor_dict["old_logps"],
             tensor_dict["ref_logps"],
@@ -101,15 +102,18 @@ def compute_advantages(
             },
             step=step,
         )
+
         if config.actor.kl.type == "reward":
             tensor_dict["rewards"] -= config.actor.kl.coef * old_ref_approx_kl
 
     def _extract_actions(
-        tensor_dict: dict[str, torch.Tensor],
-    ) -> dict[str, torch.Tensor]:
+        tensor_dict: Dict[str, torch.Tensor],
+    ) -> Dict[str, torch.Tensor]:
+
         indices = torch.where(tensor_dict["action_mask"])
         return {k: v[indices] for k, v in tensor_dict.items()}
 
+    # When computing advantages, sequences within a trajectory are concatenated
     processed_tensor_dict = pack_tensor_dicts(
         [
             _extract_actions({k: v[start:end] for k, v in tensor_dict.items()})
@@ -119,9 +123,7 @@ def compute_advantages(
 
     if config.adv.estimator == "gae":
         tensor_dict_delta = _compute_gae(
-            processed_tensor_dict,
-            config.adv.gamma,
-            config.adv.lamda,
+            processed_tensor_dict, config.adv.gamma, config.adv.lamda
         )
     elif config.adv.estimator == "reinforce":
         tensor_dict_delta = _compute_reinforce_adv(
@@ -144,8 +146,9 @@ def compute_advantages(
 
 
 def rm_loss(
-    minibatch: dict[str, torch.Tensor], suffix: str
-) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
+    minibatch: Dict[str, torch.Tensor], suffix: str
+) -> Tuple[torch.Tensor, Dict[str, List[float]]]:
+
     chosen_rewards, rejected_rewards = minibatch["values"].sum(-1).view(-1, 2).T
     reward_margins = chosen_rewards - rejected_rewards
     losses = -F.logsigmoid(reward_margins)
@@ -153,10 +156,8 @@ def rm_loss(
 
 
 def dpo_loss(
-    config: Union[ActorConfig, dict[str, Any]],
-    minibatch: dict[str, torch.Tensor],
-    suffix: str,
-) -> tuple[torch.Tensor, dict[str, list[float]]]:
+    config: DictConfig, minibatch: Dict[str, torch.Tensor], suffix: str
+) -> Tuple[torch.Tensor, Dict[str, List[float]]]:
 
     chosen_rewards, rejected_rewards = (
         config.beta
@@ -174,8 +175,9 @@ def dpo_loss(
 
 
 def actor_ppo_loss(
-    config: Union[ActorConfig, dict[str, Any]], minibatch: dict[str, torch.Tensor]
-) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    config: DictConfig, minibatch: Dict[str, torch.Tensor]
+) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+
     ratio = torch.exp(
         minibatch["logps"]
         - minibatch.get("old_logps", minibatch["logps"].detach())
@@ -212,8 +214,8 @@ def actor_ppo_loss(
 
 
 def critic_ppo_loss(
-    config: Union[CriticConfig, dict[str, Any]], minibatch: dict[str, torch.Tensor]
-) -> tuple[torch.Tensor, torch.Tensor]:
+    config: DictConfig, minibatch: Dict[str, torch.Tensor]
+) -> Tuple[torch.Tensor, torch.Tensor]:
 
     clipped_values = torch.clamp(
         minibatch["values"],

@@ -1,5 +1,5 @@
 from typing import Optional, Union, Dict, List, Tuple, Generator, Sequence
-from dataclasses import asdict
+from omegaconf import OmegaConf, DictConfig
 import os
 import asyncio
 import importlib
@@ -15,7 +15,7 @@ from sglang.srt.entrypoints.http_server_engine import launch_server_process
 from sglang.srt.utils import MultiprocessingSerializer
 from sglang_router.launch_router import RouterArgs, launch_router
 from trainer.datasets import get_dataloaders, pack_tensor_dicts, RLDataset, SampleGroup
-from trainer.distributed_utils.comm import (
+from trainer.utils.communication import (
     get_host,
     get_available_port,
     get_gloo_group,
@@ -24,8 +24,7 @@ from trainer.distributed_utils.comm import (
     sync_request,
     async_request,
 )
-from trainer.distributed_utils.logging import progress_bar, time_logger, gather_and_log
-from trainer.datamodels import RolloutConfig
+from trainer.utils.logging import progress_bar, time_logger, gather_and_log
 
 try:
     from sglang.srt.utils.patch_torch import monkey_patch_torch_reductions
@@ -59,7 +58,7 @@ def shutdown_processes_when_exit(func):
 
 class Rollout:
 
-    def __init__(self, config: RolloutConfig):
+    def __init__(self, config: DictConfig):
 
         self.config = config
         self._prepare_device_mesh()
@@ -120,19 +119,13 @@ class Rollout:
     def _launch_server_process(self):
 
         # TODO: support cross-node server
-        # Support both dataclass and dict config for server_args
-        if hasattr(self.config.server_args, "__dataclass_fields__"):
-            server_args_dict = self.config.server_args.to_dict()
-        elif hasattr(self.config.server_args, "to_dict"):
-            server_args_dict = self.config.server_args.to_dict()
-        else:
-            server_args_dict = dict(self.config.server_args)
+        server_args = OmegaConf.to_container(self.config.server_args)
         server_args = ServerArgs(
             enable_memory_saver=True,
             host=get_host(),
             port=get_available_port(),
             log_level="error",
-            **server_args_dict,
+            **server_args,
         )
         server_process = launch_server_process(server_args)
         PROCESSES.append(server_process)
