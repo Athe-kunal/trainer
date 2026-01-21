@@ -1,4 +1,4 @@
-from typing import Any, Literal, Callable
+from typing import Any, Optional, List, Literal, Callable
 import os
 import time
 import json
@@ -13,6 +13,7 @@ import torch.distributed as dist
 
 
 def get_host() -> str:
+
     hostname = socket.gethostname()
     return socket.gethostbyname(hostname)
 
@@ -26,13 +27,15 @@ def get_available_port() -> int:
 
 
 def initialize_global_process_group(
-    create_gloo_group: bool = False, timeout_second: int = 36_000
-) -> None:
+    create_gloo_group: bool = False, timeout_second: int = 36000
+):
+
     dist.init_process_group("nccl", timeout=timedelta(seconds=timeout_second))
     local_rank = int(os.environ["LOCAL_RANK"])
     torch.cuda.set_device(local_rank)
 
     if create_gloo_group:
+
         world_size = dist.get_world_size()
         global GLOO_GROUP
         GLOO_GROUP = dist.new_group(
@@ -47,6 +50,7 @@ def get_gloo_group():
 
 
 def _unwrap_process_group(process_group: dist.ProcessGroup) -> dist.ProcessGroup:
+
     if hasattr(process_group, "group"):
         return process_group.group
     elif hasattr(process_group, "get_group"):
@@ -56,11 +60,12 @@ def _unwrap_process_group(process_group: dist.ProcessGroup) -> dist.ProcessGroup
 
 
 def broadcast_object(
-    obj: Any | None,
-    src: Any | None,
-    process_group: dist.ProcessGroup | None = None,
-    group_src: int | None = None,
+    obj: Optional[Any],
+    src: Optional[int] = None,
+    process_group: Optional[dist.ProcessGroup] = None,
+    group_src: Optional[int] = None,
 ) -> Any:
+
     object_list = [obj]
     dist.broadcast_object_list(
         object_list,
@@ -72,9 +77,9 @@ def broadcast_object(
 
 
 def gather_and_concat_list(
-    lst: list[Any], process_group: dist.ProcessGroup
-) -> list[Any] | None:
-    # Initialize receiver list
+    lst: List[Any], process_group: dist.ProcessGroup
+) -> Optional[List[Any]]:
+
     lists = (
         dist.get_world_size(process_group) * [None]
         if dist.get_rank(process_group) == 0
@@ -118,21 +123,21 @@ def sync_request(
                     return response.text
 
             except:
+
                 if trial == max_trials - 1:
                     raise
                 time.sleep(retry_delay)
-            finally:
-                pass
 
 
 def with_session(func: Callable) -> Callable:
 
     @functools.wraps(func)
-    async def wrapper(*args, **kwargs) -> Callable:
+    async def wrapper(*args, **kwargs):
+
         global SESSION
         SESSION = aiohttp.ClientSession(
             connector=aiohttp.TCPConnector(limit=0),
-            timeout=aiohttp.ClientTImeout(total=None),
+            timeout=aiohttp.ClientTimeout(total=None),
         )
 
         try:
@@ -144,7 +149,7 @@ def with_session(func: Callable) -> Callable:
 
 
 async def async_request(
-    url: str | list[str],
+    url: str | List[str],
     endpoint: str,
     method: Literal["POST", "GET"] = "POST",
     max_trials: int = 3,

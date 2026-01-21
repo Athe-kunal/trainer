@@ -1,5 +1,4 @@
-from typing import ContextManager, Any
-import configmate
+from typing import ContextManager, Any, Union
 from accelerate import init_empty_weights
 import torch
 from torch.nn.utils import clip_grad_norm_
@@ -12,13 +11,25 @@ from torch.distributed.checkpoint.state_dict import (
 )
 from transformers import get_scheduler
 from trainer.workers.base import BaseWorker
+from trainer.distributed_utils.sequences import scatter_data, gather_data
+from trainer.datamodels import (
+    ActorConfig,
+    CriticConfig,
+    RefActorConfig,
+    BaseWorkerConfig,
+)
 
 from trainer.workers.fsdp import data_parallelism
+from trainer.workers.fsdp import tensor_parallelism
 
 
 # https://gkavya.in/pytorch-parallelism/
 class FSDPWorker(BaseWorker):
-    def __init__(self, config: dict, train: bool):
+    def __init__(
+        self,
+        config: Union[ActorConfig, CriticConfig, RefActorConfig, BaseWorkerConfig],
+        train: bool,
+    ):
         super().__init__(config, train)
         world_size = dist.get_world_size()
         assert (
@@ -73,7 +84,9 @@ class FSDPWorker(BaseWorker):
         if self.train and self.config.enable_gradient_checkpointing:
             self.model.grad_checkpointing_enable()
         if self.config.tp_size > 1:
-            prepare_tp_model(self.model, self.model_device_mesh["tp"])
+            tensor_parallelism.prepare_tp_model(
+                self.model, self.model_device_mesh["tp"]
+            )
 
         self.model = data_parallelism.prepare_dp_model(
             self.model,
@@ -83,7 +96,18 @@ class FSDPWorker(BaseWorker):
         )
 
         if self.train:
-            optimizer_config = self.config["optimizer"]
+            # Support both dataclass and dict config for optimizer
+            if hasattr(self.config, "optimizer"):
+                optimizer_config = self.config.optimizer
+                if hasattr(optimizer_config, "__dataclass_fields__"):
+                    # Convert dataclass to dict
+                    from dataclasses import asdict
+
+                    optimizer_config = asdict(optimizer_config)
+                elif hasattr(optimizer_config, "to_dict"):
+                    optimizer_config = optimizer_config.to_dict()
+            else:
+                optimizer_config = self.config.get("optimizer", {})
             self.optimizer = torch.optim.AdamW(
                 self.model.parameters(), **optimizer_config
             )
@@ -91,17 +115,31 @@ class FSDPWorker(BaseWorker):
 
     def prepare_scheduler(self, total_steps: int) -> None:
         num_training_steps = total_steps * getattr(self.config, "update_per_rollout", 1)
-        scheduler_config = self.config["scheduler"]
-        scheduler_name = scheduler_config.pop("name")
-        num_warmup_steps = int(
-            scheduler_config.pop("warmup_ratio") * num_training_steps
-        )
+        # Support both dataclass and dict config for scheduler
+        if hasattr(self.config, "scheduler"):
+            scheduler_config = self.config.scheduler
+            if hasattr(scheduler_config, "__dataclass_fields__"):
+                scheduler_name = scheduler_config.name
+                warmup_ratio = scheduler_config.warmup_ratio
+                scheduler_kwargs = {}
+            else:
+                scheduler_config = dict(scheduler_config)
+                scheduler_name = scheduler_config.pop("name")
+                warmup_ratio = scheduler_config.pop("warmup_ratio")
+                scheduler_kwargs = scheduler_config
+        else:
+            scheduler_config = dict(self.config.get("scheduler", {}))
+            scheduler_name = scheduler_config.pop("name", "cosine")
+            warmup_ratio = scheduler_config.pop("warmup_ratio", 0.1)
+            scheduler_kwargs = scheduler_config
+
+        num_warmup_steps = int(warmup_ratio * num_training_steps)
         self.scheduler = get_scheduler(
             scheduler_name,
             self.optimizer,
             num_warmup_steps=num_warmup_steps,
             num_training_steps=num_training_steps,
-            scheduler_specific_kwargs=scheduler_config,
+            scheduler_specific_kwargs=scheduler_kwargs,
         )
 
     def _scatter_data(

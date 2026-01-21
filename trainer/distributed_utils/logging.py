@@ -8,7 +8,7 @@ import wandb
 from trainer.distributed_utils.comm import gather_and_concat_list
 
 
-def progress_bard(*args: Any, **kwargs: Any) -> tqdm:
+def progress_bar(*args: Any, **kwargs: Any) -> tqdm:
     return tqdm(
         *args, position=1, leave=False, disable=(dist.get_rank() != 0), **kwargs
     )

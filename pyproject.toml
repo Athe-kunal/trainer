@@ -9,6 +9,7 @@ dependencies = [
     "configmate[standard]>=0.1.8",
     "datasets>=4.4.1",
     "ipykernel>=7.1.0",
+    "liger-kernel>=0.6.4",
     "nvitop>=1.6.1",
     "pyvene>=0.1.8",
     "ring-flash-attn>=0.1.8",
