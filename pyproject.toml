@@ -16,6 +16,7 @@ dependencies = [
     "orjson>=3.11.5",
     "pyvene>=0.1.8",
     "ring-flash-attn>=0.1.8",
+    "sgl-kernel>=0.3.21",
     "sglang>=0.5.2",
     "sglang-router>=0.3.2",
     "sympy>=1.14.0",
