@@ -3,17 +3,21 @@ name = "trainer"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
-requires-python = ">=3.13"
+requires-python = ">=3.10"
 dependencies = [
     "accelerate>=1.12.0",
     "configmate[standard]>=0.1.8",
     "datasets>=4.4.1",
+    "hydra-core>=1.3.2",
     "ipykernel>=7.1.0",
     "liger-kernel>=0.6.4",
     "nvitop>=1.6.1",
+    "omegaconf>=2.3.0",
+    "orjson>=3.11.5",
     "pyvene>=0.1.8",
     "ring-flash-attn>=0.1.8",
     "sglang>=0.5.2",
+    "sglang-router>=0.3.2",
     "sympy>=1.14.0",
     "transformers>=4.57.5",
     "vllm>=0.13.0",

@@ -3,7 +3,7 @@ from omegaconf import DictConfig
 import torch.distributed as dist
 from tqdm import tqdm
 from trainer.trainer.base import Trainer
-from trainer.datasets import DPODataset, get_dataloaders
+from trainer.datasets import DPODataset, get_dataloader
 from trainer.workers import initialize_actor
 from trainer.utils.communication import initialize_global_process_group
 
@@ -15,7 +15,7 @@ class DPOTrainer(Trainer):
 
         self.actor = initialize_actor(config.actor, True)
         self.ref_actor = initialize_actor(config.ref_actor, False)
-        self.train_dataloader, self.test_dataloader = get_dataloaders(
+        self.train_dataloader, self.test_dataloader = get_dataloader(
             DPODataset, config.data, self.actor.tokenizer
         )
         self.actor.prepare_scheduler(

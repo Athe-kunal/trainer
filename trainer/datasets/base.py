@@ -1,4 +1,4 @@
-from typing import List, Optional, Dict, Sequence, Any, Tuple
+from typing import List, Optional, Dict, Sequence, Any, Tuple, Union
 from omegaconf import DictConfig
 import os
 import datasets
@@ -9,12 +9,13 @@ from torch.nn.utils.rnn import pad_sequence
 from torchdata.stateful_dataloader import StatefulDataLoader
 from transformers import AutoTokenizer
 
+
 def get_tensor_dict(
     states: List[int],
     actions: List[int],
     action_mask: List[int],
     max_length: Optional[int] = None,
-    rm: bool = False
+    rm: bool = False,
 ) -> Dict[str, torch.Tensor]:
 
     if not rm:
@@ -30,61 +31,52 @@ def get_tensor_dict(
     tensor_dict = {
         "states": torch.LongTensor(states),
         "eos_mask": torch.LongTensor((len(states) - 1) * [0] + [1]),
-        "position_ids": torch.arange(len(states))
+        "position_ids": torch.arange(len(states)),
     }
     if rm:
         tensor_dict["action_mask"] = torch.LongTensor(
             (len(states) - 1) * [0] + [1]
-        ) # rewards of non-terminal tokens are zeros
+        )  # rewards of non-terminal tokens are zeros
     else:
         tensor_dict["actions"] = torch.LongTensor(actions)
         tensor_dict["action_mask"] = torch.LongTensor(action_mask)
 
     return tensor_dict
 
+
 def pack_tensor_dicts(
-    tensor_dicts: Sequence[Dict[str, torch.Tensor]]
+    tensor_dicts: Sequence[Dict[str, torch.Tensor]],
 ) -> Dict[str, torch.Tensor]:
     return {
-        k: pad_sequence(
-            [td[k] for td in tensor_dicts], True
-        )
+        k: pad_sequence([td[k] for td in tensor_dicts], True)
         for k in tensor_dicts[0].keys()
     }
 
 
 class BaseDataset(Dataset):
-    
+
     def __init__(
-        self,
-        config: DictConfig,
-        tokenizer: AutoTokenizer,
-        dataset: datasets.Dataset
+        self, config: DictConfig, tokenizer: AutoTokenizer, dataset: datasets.Dataset
     ):
 
         self.config = config
         self.tokenizer = tokenizer
         self.dataset = dataset
-        
+
     def _tokenize_prompt_response(
         self, prompt: str, response: str, rm: bool = False
     ) -> Dict[str, torch.Tensor]:
-        
-        prompt = self.tokenizer.encode(
-            prompt, add_special_tokens=False
-        )
+
+        prompt = self.tokenizer.encode(prompt, add_special_tokens=False)
         response = self.tokenizer.encode(
-            response + self.tokenizer.eos_token,
-            add_special_tokens=False
+            response + self.tokenizer.eos_token, add_special_tokens=False
         )
-        
+
         states = prompt + response
         actions = len(prompt) * [0] + response
         action_mask = len(prompt) * [0] + len(response) * [1]
-        
-        return get_tensor_dict(
-            states, actions, action_mask, self.config.max_length, rm
-        )
+
+        return get_tensor_dict(states, actions, action_mask, self.config.max_length, rm)
 
     def _tokenize_messages(
         self, messages: List[Dict[str, Any]], rm: bool = False
@@ -93,36 +85,33 @@ class BaseDataset(Dataset):
         prev_text, states, actions, action_mask = "", [], [], []
         tensor_dicts = []
         for turn in range(len(messages)):
-            
+
             is_this_turn_assistant = messages[turn]["role"] == "assistant"
-            is_next_turn_assistant = turn + 1 < len(messages) and messages[turn + 1]["role"] == "assistant"
+            is_next_turn_assistant = (
+                turn + 1 < len(messages) and messages[turn + 1]["role"] == "assistant"
+            )
 
             if not is_this_turn_assistant and not is_next_turn_assistant:
                 continue
 
             text = self.tokenizer.apply_chat_template(
-                messages[:turn + 1],
+                messages[: turn + 1],
                 add_generation_prompt=is_next_turn_assistant,
-                tokenize=False
+                tokenize=False,
             )
 
             if text.startswith(prev_text):
-        
+
                 state = self.tokenizer.encode(
-                    text[len(prev_text):], add_special_tokens=False
+                    text[len(prev_text) :], add_special_tokens=False
                 )
-                # This is NOT equivalent to 
+                # This is NOT equivalent to
                 #     next_states = apply_chat_template(..., tokenize=True)
                 #     state = next_states[len(states):]
                 states.extend(state)
-                actions.extend(
-                    state if is_this_turn_assistant
-                    else len(state) * [0]
-                )
-                action_mask.extend(
-                    len(state) * [is_this_turn_assistant]
-                )
-            
+                actions.extend(state if is_this_turn_assistant else len(state) * [0])
+                action_mask.extend(len(state) * [is_this_turn_assistant])
+
             else:
                 assert is_next_turn_assistant
 
@@ -131,18 +120,14 @@ class BaseDataset(Dataset):
                         states, actions, action_mask, self.config.max_length, rm
                     )
                 )
-                states = self.tokenizer.encode(
-                    text, add_special_tokens=False
-                )
+                states = self.tokenizer.encode(text, add_special_tokens=False)
                 actions = len(states) * [0]
                 action_mask = len(states) * [0]
 
             prev_text = text
 
         tensor_dicts.append(
-            get_tensor_dict(
-                states, actions, action_mask, self.config.max_length, rm
-            )
+            get_tensor_dict(states, actions, action_mask, self.config.max_length, rm)
         )
 
         return tensor_dicts
@@ -157,7 +142,7 @@ class StatefulCycleDataLoader(StatefulDataLoader):
         """
         Fetch a variable number of data.
         """
-        
+
         if not hasattr(self, "iterator"):
             self.iterator = iter(self)
 
@@ -172,28 +157,30 @@ class StatefulCycleDataLoader(StatefulDataLoader):
         return data_list
 
 
-def get_dataloaders(
+def get_dataloader(
     dataset_cls: BaseDataset,
     config: DictConfig,
     tokenizer: AutoTokenizer,
-    batch_size: int = None
+    batch_size: int = None,
 ) -> Tuple[StatefulDataLoader, StatefulDataLoader]:
 
-    def _load_dataset(path: str):
+    def _load_dataset(path: Union[str, List[str]]):
 
-        # TODO: support concatnating multiple datasets
-        if "@" in path:
-            split, path = path.split("@")
-        else:
-            split, path = "train", path
+        def _load_single(name: str):
+            ext = os.path.splitext(name)[-1].strip(".")
+            is_data_file = ext in ["json", "jsonl", "csv", "parquet", "arrow"]
+            if is_data_file and os.path.exists(name):
+                if ext == "jsonl":
+                    ext = "json"
+                return datasets.load_dataset(ext, data_files=name, split="train")
+            return datasets.load_dataset(name, split="train")
 
-        ext = os.path.splitext(path)[-1].strip(".")
-        if ext in ["json", "jsonl", "csv", "parquet", "arrow"]:
-            if ext == "jsonl":
-                ext = "json"
-            return datasets.load_dataset(ext, data_files=path, split=split)
-        else:
-            return datasets.load_dataset(path, split=split)
+        if isinstance(path, list):
+            if not path:
+                raise ValueError("Dataset path list must not be empty.")
+            return datasets.concatenate_datasets([_load_single(item) for item in path])
+
+        return _load_single(path)
 
     def _get_dataloader(dataset: BaseDataset, batch_size: int):
         return StatefulCycleDataLoader(
@@ -201,7 +188,7 @@ def get_dataloaders(
             batch_size=batch_size,
             shuffle=True,
             drop_last=True,
-            collate_fn=dataset.collate_fn
+            collate_fn=dataset.collate_fn,
         )
 
     train_dataset = _load_dataset(config.train.path)
@@ -223,7 +210,5 @@ def get_dataloaders(
     train_dataloader = _get_dataloader(
         train_dataset, batch_size or config.train.batch_size
     )
-    test_dataloader = _get_dataloader(
-        test_dataset, batch_size or len(test_dataset)
-    )
+    test_dataloader = _get_dataloader(test_dataset, batch_size or len(test_dataset))
     return train_dataloader, test_dataloader

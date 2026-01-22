@@ -14,7 +14,7 @@ from sglang.srt.server_args import ServerArgs
 from sglang.srt.entrypoints.http_server_engine import launch_server_process
 from sglang.srt.utils import MultiprocessingSerializer
 from sglang_router.launch_router import RouterArgs, launch_router
-from trainer.datasets import get_dataloaders, pack_tensor_dicts, RLDataset, SampleGroup
+from trainer.datasets import get_dataloader, pack_tensor_dicts, RLDataset, SampleGroup
 from trainer.utils.communication import (
     get_host,
     get_available_port,
@@ -69,7 +69,7 @@ class Rollout:
             self.tokenizer = AutoTokenizer.from_pretrained(
                 config.server_args.model_path, trust_remote_code=True
             )
-            self.train_dataloader, self.test_dataloader = get_dataloaders(
+            self.train_dataloader, self.test_dataloader = get_dataloader(
                 RLDataset, config, self.tokenizer, 1
             )
 

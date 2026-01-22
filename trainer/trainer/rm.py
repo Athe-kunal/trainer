@@ -3,7 +3,7 @@ from omegaconf import DictConfig
 import torch.distributed as dist
 from tqdm import tqdm
 from trainer.trainer.base import Trainer
-from trainer.datasets import RMDataset, get_dataloaders
+from trainer.datasets import RMDataset, get_dataloader
 from trainer.workers import initialize_critic
 from trainer.utils.communication import initialize_global_process_group
 
@@ -14,7 +14,7 @@ class RMTrainer(Trainer):
         super().__init__(config)
 
         self.critic = initialize_critic(config.critic)
-        self.train_dataloader, self.test_dataloader = get_dataloaders(
+        self.train_dataloader, self.test_dataloader = get_dataloader(
             RMDataset, config.data, self.critic.tokenizer
         )
         self.critic.prepare_scheduler(

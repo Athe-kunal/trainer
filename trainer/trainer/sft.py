@@ -3,7 +3,7 @@ from omegaconf import DictConfig
 import torch.distributed as dist
 from tqdm import tqdm
 from trainer.trainer.base import Trainer
-from trainer.datasets import SFTDataset, get_dataloaders
+from trainer.datasets import SFTDataset, get_dataloader
 from trainer.workers import initialize_actor
 from trainer.utils.communication import initialize_global_process_group
 
@@ -14,7 +14,7 @@ class SFTTrainer(Trainer):
         super().__init__(config)
 
         self.actor = initialize_actor(config.actor, True)
-        self.train_dataloader, self.test_dataloader = get_dataloaders(
+        self.train_dataloader, self.test_dataloader = get_dataloader(
             SFTDataset, config.data, self.actor.tokenizer
         )
         self.actor.prepare_scheduler(
