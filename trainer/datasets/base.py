@@ -9,6 +9,8 @@ from torch.nn.utils.rnn import pad_sequence
 from torchdata.stateful_dataloader import StatefulDataLoader
 from transformers import AutoTokenizer
 
+from loguru import logger
+
 
 def get_tensor_dict(
     states: List[int],
@@ -164,23 +166,26 @@ def get_dataloader(
     batch_size: int = None,
 ) -> Tuple[StatefulDataLoader, StatefulDataLoader]:
 
-    def _load_dataset(path: Union[str, List[str]]):
+    def _load_dataset(path: Union[str, List[str]], kwargs: dict[str, Any]):
 
-        def _load_single(name: str):
+        def _load_single(name: str, kwargs: dict[str, Any]):
             ext = os.path.splitext(name)[-1].strip(".")
             is_data_file = ext in ["json", "jsonl", "csv", "parquet", "arrow"]
             if is_data_file and os.path.exists(name):
                 if ext == "jsonl":
                     ext = "json"
-                return datasets.load_dataset(ext, data_files=name, split="train")
-            return datasets.load_dataset(name, split="train")
+                return datasets.load_dataset(ext, data_files=name, **kwargs)
+            logger.info(f"Loading dataset from {name} with kwargs {kwargs}")
+            return datasets.load_dataset(name, **kwargs)
 
         if isinstance(path, list):
             if not path:
                 raise ValueError("Dataset path list must not be empty.")
-            return datasets.concatenate_datasets([_load_single(item) for item in path])
+            return datasets.concatenate_datasets(
+                [_load_single(item, kwargs) for item in path]
+            )
 
-        return _load_single(path)
+        return _load_single(path, kwargs)
 
     def _get_dataloader(dataset: BaseDataset, batch_size: int):
         return StatefulCycleDataLoader(
@@ -191,9 +196,9 @@ def get_dataloader(
             collate_fn=dataset.collate_fn,
         )
 
-    train_dataset = _load_dataset(config.train.path)
+    train_dataset = _load_dataset(config.train.path, kwargs=config.train.kwargs)
     if config.test.path:
-        test_dataset = _load_dataset(config.test.path)
+        test_dataset = _load_dataset(config.test.path, kwargs=config.test.kwargs)
     else:
         total_size = len(train_dataset)
         indices = np.arange(total_size)
@@ -211,4 +216,7 @@ def get_dataloader(
         train_dataset, batch_size or config.train.batch_size
     )
     test_dataloader = _get_dataloader(test_dataset, batch_size or len(test_dataset))
+    logger.info(
+        f"Loaded {len(train_dataloader)} train samples and {len(test_dataloader)} test samples"
+    )
     return train_dataloader, test_dataloader

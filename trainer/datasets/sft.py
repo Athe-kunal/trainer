@@ -9,7 +9,29 @@ class SFTDataset(BaseDataset):
 
         sample = self.dataset[idx]
         if self.config.apply_chat_template:
-            tensor_dicts = self._tokenize_messages(sample[self.config.messages_key])
+            if not self.config.messages_key:
+                if self.config.system_prompt:
+                    messages = [
+                        {
+                            "role": "system",
+                            "content": self.config.system_prompt,
+                        },
+                    ]
+                messages.extend(
+                    [
+                        {
+                            "role": "user",
+                            "content": sample[self.config.prompt_key],
+                        },
+                        {
+                            "role": "assistant",
+                            "content": sample[self.config.response_key],
+                        },
+                    ]
+                )
+            else:
+                messages = sample[self.config.messages_key]
+            tensor_dicts = self._tokenize_messages(messages)
         else:
             tensor_dicts = [
                 self._tokenize_prompt_response(
