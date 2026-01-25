@@ -49,7 +49,7 @@ class ORPOTrainer(Trainer):
     def __init__(self, config):
         super().__init__(config)
 
-        self.actor = Actor(config.actor, True)
+        self.actor = initialize_actor(config.actor, True)
         dataset = DPODataset(config.data, self.actor.tokenizer)
         self.train_dataloader = get_dataloader(dataset, config.data.batch_size)
         self.actor.scheduler = self.prepare_scheduler(self.actor)

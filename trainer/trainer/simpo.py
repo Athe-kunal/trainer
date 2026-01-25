@@ -1,15 +1,13 @@
 import hydra
-from collections import defaultdict
-import torch.nn.functional as F
+from omegaconf import DictConfig
 import torch.distributed as dist
 from tqdm import tqdm
 from trainer.trainer.base import Trainer
 from trainer.datasets import DPODataset, get_dataloader
-from trainer.workers import Actor
+from trainer.workers import initialize_actor
 from trainer.utils.sequences import data_manager, count_total
-from trainer.utils.communication import initialize_global_process_group
-from trainer.utils.checkpointing import load_ckpt, save_ckpt, save_model
 from trainer.utils.logging import progress_bar, time_logger, gather_and_log
+from trainer.utils.communication import initialize_global_process_group
 
 
 @time_logger("update_actor")

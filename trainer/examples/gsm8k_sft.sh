@@ -1,7 +1,7 @@
 set -euo pipefail
 
 uv run torchrun \
-    --nproc_per_node=4 \
+    --nproc_per_node=2 \
     -m trainer.trainer.sft \
     data.train.path=openai/gsm8k \
     data.test.path=openai/gsm8k \
@@ -16,10 +16,11 @@ uv run torchrun \
     data.test_ratio=0.03 \
     data.train.max_length=16384 \
     data.train.batch_size=32 \
-    actor.model_name=Qwen/Qwen3-4B-Instruct-2507 \
-    actor.cp_size=4 \
+    actor.model_name=Qwen/Qwen2.5-1.5B-Instruct \
+    actor.cp_size=1 \
+    actor.ddp_size=2 \
     actor.max_length_per_device=4096 \
     trainer.project=GSM8K \
-    trainer.experiment_name=qwen3-4b-inst-2507 \
+    trainer.experiment_name=qwen2-5-1b-inst \
     trainer.n_epochs=1 \
-    trainer.use_wandb=false
+    trainer.use_wandb=false 

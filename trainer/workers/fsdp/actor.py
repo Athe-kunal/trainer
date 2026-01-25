@@ -1,4 +1,5 @@
 from typing import Dict, Optional, Tuple, List
+from loguru import logger
 from omegaconf import DictConfig
 from collections import defaultdict
 import torch
@@ -124,7 +125,6 @@ class FSDPActor(FSDPWorker):
                 self._scale_loss(loss).backward()
             suffix = "train" if train else "test"
             metrics[f"loss/{suffix}"].append(loss.item())
-
         if train:
             grad_norm = self._optimizer_step()
             metrics["grad_norm"].append(grad_norm)
