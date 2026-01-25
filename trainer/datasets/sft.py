@@ -1,6 +1,14 @@
-from typing import Tuple, Dict, List
+from typing import Literal, Tuple, Dict, List, TypedDict
 import torch
 from trainer.datasets.base import BaseDataset, pack_tensor_dicts
+
+MessagesType: Literal[str] = ["system", "user", "assistant"]
+
+
+class Message(TypedDict):
+    role: MessagesType
+    content: str
+    train: bool
 
 
 class SFTDataset(BaseDataset):
@@ -8,29 +16,8 @@ class SFTDataset(BaseDataset):
     def __getitem__(self, idx: int) -> List[Dict[str, torch.Tensor]]:
 
         sample = self.dataset[idx]
-        if self.config.apply_chat_template:
-            if not self.config.messages_key:
-                if self.config.system_prompt:
-                    messages = [
-                        {
-                            "role": "system",
-                            "content": self.config.system_prompt,
-                        },
-                    ]
-                messages.extend(
-                    [
-                        {
-                            "role": "user",
-                            "content": sample[self.config.prompt_key],
-                        },
-                        {
-                            "role": "assistant",
-                            "content": sample[self.config.response_key],
-                        },
-                    ]
-                )
-            else:
-                messages = sample[self.config.messages_key]
+        if not self.config.apply_chat_template:
+            messages = sample[self.config.messages_key]
             tensor_dicts = self._tokenize_messages(messages)
         else:
             tensor_dicts = [
