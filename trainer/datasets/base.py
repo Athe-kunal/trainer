@@ -235,9 +235,12 @@ def get_dataloader(
     batch_size: int = None,
 ) -> Tuple[StatefulDataLoader, StatefulDataLoader]:
 
-    def _load_dataset(path: Union[str, List[str]], kwargs: dict[str, Any]):
+    def _load_dataset(
+        path: Union[str, List[str]], kwargs: dict[str, Any] | None = None
+    ):
+        kwargs = kwargs or {}
 
-        def _load_single(name: str, kwargs: dict[str, Any]):
+        def _load_single(name: str):
             ext = os.path.splitext(name)[-1].strip(".")
             is_data_file = ext in ["json", "jsonl", "csv", "parquet", "arrow"]
             if is_data_file and os.path.exists(name):
@@ -250,11 +253,9 @@ def get_dataloader(
         if isinstance(path, list):
             if not path:
                 raise ValueError("Dataset path list must not be empty.")
-            return datasets.concatenate_datasets(
-                [_load_single(item, kwargs) for item in path]
-            )
+            return datasets.concatenate_datasets([_load_single(item) for item in path])
 
-        return _load_single(path, kwargs)
+        return _load_single(path)
 
     def _get_dataloader(dataset: BaseDataset, batch_size: int):
         return StatefulCycleDataLoader(
@@ -266,11 +267,13 @@ def get_dataloader(
         )
 
     train_dataset = _load_dataset(
-        dataset_config.train.path, kwargs=dataset_config.train.kwargs
+        dataset_config.train.path,
+        kwargs=dataset_config.train.get("kwargs"),
     )
     if dataset_config.test.path:
         test_dataset = _load_dataset(
-            dataset_config.test.path, kwargs=dataset_config.test.kwargs
+            dataset_config.test.path,
+            kwargs=dataset_config.test.get("kwargs"),
         )
     else:
         total_size = len(train_dataset)
