@@ -11,6 +11,7 @@ data:
     chosen_key: chosen
     rejected_key: rejected
     apply_chat_template: true
+    train_on_what: []
   test:
     path: null
     max_length: ${data.train.max_length}
@@ -18,6 +19,7 @@ data:
     chosen_key: ${data.train.chosen_key}
     rejected_key: ${data.train.rejected_key}
     apply_chat_template: ${data.train.apply_chat_template}
+    train_on_what: ${data.train.train_on_what}
   test_ratio: 0.03
 
 trainer:

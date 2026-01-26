@@ -5,51 +5,22 @@ from tqdm import tqdm
 from trainer.trainer.base import Trainer
 from trainer.datasets import DPODataset, get_dataloader
 from trainer.workers import initialize_actor
-from trainer.utils.sequences import data_manager, count_total
-from trainer.utils.logging import progress_bar, time_logger, gather_and_log
 from trainer.utils.communication import initialize_global_process_group
-
-
-@time_logger("update_actor")
-@data_manager(pair=True)
-def update(worker, minibatches, step):
-
-    total_pairs = count_total(minibatches, "eos_mask", worker.device_mesh["dp"]) // 2
-    metrics = defaultdict(list)
-    for minibatch in progress_bar(minibatches, desc="Update actor"):
-        logps = worker.forward(minibatch)
-        response_lens = minibatch["action_mask"].sum(-1)
-        chosen_rewards, rejected_rewards = worker.config.beta * (
-            ((logps).sum(-1) / response_lens.clamp(min=1)).view(-1, 2).T
-        )
-        reward_margins = chosen_rewards - rejected_rewards
-        loss = -F.logsigmoid(reward_margins - worker.config.gamma).sum() / total_pairs
-        worker.backward(loss)
-
-        metrics["rewards/chosen"].extend(chosen_rewards.tolist())
-        metrics["rewards/rejected"].extend(rejected_rewards.tolist())
-        metrics["rewards/margin"].extend(reward_margins.tolist())
-        metrics["loss"].append(loss.item())
-        metrics["accuracy"].extend((reward_margins > 0).tolist())
-
-    grad_norm = worker.optimizer_step()
-    metrics["grad_norm"].append(grad_norm)
-    gather_and_log(metrics, worker.device_mesh["dp"], step)
 
 
 class SimPOTrainer(Trainer):
 
-    def __init__(self, config):
+    def __init__(self, config: DictConfig):
         super().__init__(config)
 
-        self.actor = Actor(config.actor, True)
+        self.actor = initialize_actor(config.actor, True)
         dataset = DPODataset(config.data, self.actor.tokenizer)
         self.train_dataloader = get_dataloader(dataset, config.data.batch_size)
         self.actor.scheduler = self.prepare_scheduler(self.actor)
 
     def train(self):
 
-        step = load_ckpt(self, (self.actor,))
+        step = self.load_ckpt((self.actor,))
         for epoch in range(
             step // len(self.train_dataloader), self.config.trainer.n_epochs
         ):
@@ -60,9 +31,9 @@ class SimPOTrainer(Trainer):
                 initial=step % len(self.train_dataloader),
             ):
                 step += 1
-                update(self.actor, tensor_dict, step)
-                save_ckpt(self, (self.actor,), step)
-        save_model(self, self.actor)
+                self.actor.simpo_step(tensor_dict, True, step)
+                self.save_ckpt((self.actor,), step)
+        self.save_model((self.actor,))
 
 
 @hydra.main(config_path="config", config_name="simpo", version_base=None)

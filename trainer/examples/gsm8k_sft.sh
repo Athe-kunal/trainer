@@ -5,7 +5,8 @@ uv run torchrun \
     -m trainer.trainer.sft \
     data.train.path=openai/gsm8k \
     data.test.path=openai/gsm8k \
-    data.train.messages_key='' \
+    data.train.train_on_what=['assistant'] \
+    data.train.apply_chat_template=false \
     'data.train.system_prompt="You are a helpful assistant that can answer questions. Let''s think step by step."' \
     data.train.prompt_key=question \
     data.train.response_key=answer \

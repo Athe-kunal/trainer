@@ -36,6 +36,7 @@ rollout:
     prompt_key: prompt
     messages_key: messages
     apply_chat_template: true
+    train_on_what: []
     prompts_per_rollout: null
     responses_per_prompt: 1
     sampling_params:
@@ -50,6 +51,7 @@ rollout:
     prompt_key: ${rollout.train.prompt_key}
     messages_key: ${rollout.train.messages_key}
     apply_chat_template: ${rollout.train.apply_chat_template}
+    train_on_what: ${rollout.train.train_on_what}
     prompts_per_rollout: null
     responses_per_prompt: 1
     sampling_params:

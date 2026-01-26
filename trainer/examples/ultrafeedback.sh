@@ -29,16 +29,15 @@ case "$ALGO" in
     ;;
 esac
 
-export MASTER_PORT=29501
-
 uv run torchrun \
   --nproc_per_node=2 \
-  --master_port "$MASTER_PORT" \
   -m "trainer.trainer.${ALGO}" \
   data.train.path=openbmb/UltraFeedback \
   data.train.max_length=1024 \
   data.train.apply_chat_template=false \
   data.train.prompt_key=instruction \
+  'data.train.system_prompt="You are a helpful assistant."' \
+  data.train.train_on_what=[assistant] \
   data.train.chosen_key=chosen_response \
   data.train.rejected_key=rejected_response \
   actor.model_name=Qwen/Qwen2.5-1.5B-Instruct \
