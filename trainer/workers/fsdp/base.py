@@ -163,18 +163,22 @@ class FSDPWorker(BaseWorker):
 
     def _scale_loss(self, loss: torch.Tensor) -> torch.Tensor:
         # https://github.com/ChenmienTan/RL2/issues/11
+        loss = loss / self.config.grad_accumulation_steps
         return self.device_mesh["dp"].size() * self.config.cp_size * loss
 
-    def _optimizer_step(self) -> int:
-
-        grad_norm = clip_grad_norm_(
-            self.model.parameters(), max_norm=self.config.max_grad_norm
-        )
-        self._load_optimizer_to_device(torch.cuda.current_device())
-        self.optimizer.step()
-        self.optimizer.zero_grad()
-        self._load_optimizer_to_device("cpu")
-        self.scheduler.step()
+    def _optimizer_step(self, do_update: bool) -> int:
+        if do_update:
+            grad_norm = clip_grad_norm_(
+                self.model.parameters(), max_norm=self.config.max_grad_norm
+            )
+            self._load_optimizer_to_device(torch.cuda.current_device())
+            self.optimizer.step()
+            self.optimizer.zero_grad(set_to_none=True)
+            self._load_optimizer_to_device("cpu")
+            self.scheduler.step()
+        else:
+            # Compute grad norm without clipping for monitoring purposes
+            grad_norm = clip_grad_norm_(self.model.parameters(), max_norm=float("inf"))
         return grad_norm.item()
 
     def _get_model_state_dict(self, full_state_dict: bool = False) -> Dict[str, Any]:
