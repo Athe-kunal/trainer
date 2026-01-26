@@ -12,6 +12,7 @@ data:
     response_key: response
     messages_key: messages
     apply_chat_template: true
+    train_on_what: [assistant]
   test:
     path: null
     max_length: ${data.train.max_length}
@@ -20,6 +21,7 @@ data:
     response_key: ${data.train.response_key}
     messages_key: ${data.train.messages_key}
     apply_chat_template: ${data.train.apply_chat_template}
+    train_on_what: ${data.train.train_on_what}
   test_ratio: 0.03
 
 actor:

@@ -1,4 +1,15 @@
-from typing import List, Optional, Dict, Sequence, Any, Tuple, Union
+import abc
+from typing import (
+    List,
+    Optional,
+    Dict,
+    Sequence,
+    Any,
+    Tuple,
+    NamedTuple,
+    Union,
+    Literal,
+)
 from omegaconf import DictConfig
 import os
 import datasets
@@ -10,6 +21,12 @@ from torchdata.stateful_dataloader import StatefulDataLoader
 from transformers import AutoTokenizer
 
 from loguru import logger
+
+
+class Message(NamedTuple):
+    role: str
+    content: str
+    train: bool
 
 
 def get_tensor_dict(
@@ -42,7 +59,6 @@ def get_tensor_dict(
     else:
         tensor_dict["actions"] = torch.LongTensor(actions)
         tensor_dict["action_mask"] = torch.LongTensor(action_mask)
-
     return tensor_dict
 
 
@@ -55,87 +71,140 @@ def pack_tensor_dicts(
     }
 
 
-class BaseDataset(Dataset):
+class BaseDataset(Dataset, abc.ABC):
 
     def __init__(
-        self, config: DictConfig, tokenizer: AutoTokenizer, dataset: datasets.Dataset
+        self,
+        dataset_config: DictConfig,
+        tokenizer: AutoTokenizer,
+        dataset: datasets.Dataset,
     ):
 
-        self.config = config
+        self.dataset_config = dataset_config
         self.tokenizer = tokenizer
         self.dataset = dataset
 
+    @abc.abstractmethod
+    def convert_to_messages(
+        self, sample: Dict[str, Any]
+    ) -> List[Message] | tuple[List[Message], List[Message]]:
+        raise NotImplementedError("Subclasses must implement this method")
+
     def _tokenize_prompt_response(
-        self, prompt: str, response: str, rm: bool = False
+        self, messages: List[Message], rm: bool = False
     ) -> Dict[str, torch.Tensor]:
 
-        prompt = self.tokenizer.encode(prompt, add_special_tokens=False)
-        response = self.tokenizer.encode(
-            response + self.tokenizer.eos_token, add_special_tokens=False
+        states: List[int] = []
+        actions: List[int] = []
+        action_mask: List[Literal[0, 1]] = []
+        for idx, msg in enumerate(messages):
+            content = msg.content
+            if idx == len(messages) - 1:
+                content += self.tokenizer.eos_token
+            token_ids = self.tokenizer.encode(content, add_special_tokens=False)
+            token_ids_len = len(token_ids)
+            states.extend(token_ids)
+            if msg.train:
+                actions.extend(token_ids)
+                action_mask.extend(token_ids_len * [1])
+            else:
+                actions.extend(token_ids_len * [0])
+                action_mask.extend(token_ids_len * [0])
+        return get_tensor_dict(
+            states, actions, action_mask, self.dataset_config.max_length, rm
         )
 
-        states = prompt + response
-        actions = len(prompt) * [0] + response
-        action_mask = len(prompt) * [0] + len(response) * [1]
-
-        return get_tensor_dict(states, actions, action_mask, self.config.max_length, rm)
-
     def _tokenize_messages(
-        self, messages: List[Dict[str, Any]], rm: bool = False
+        self, messages: List[Message], rm: bool = False
     ) -> List[Dict[str, torch.Tensor]]:
+        """
+        Convert a multi-turn chat into one or more training sequences.
 
-        prev_text, states, actions, action_mask = "", [], [], []
-        tensor_dicts = []
+        - `states`: all tokens (context + assistant), shifted later by get_tensor_dict()
+        - `actions`: assistant tokens as targets (0 elsewhere), shifted later
+        - `action_mask`: 1 where assistant tokens are targets, else 0
+
+        We include a non-train message only if the *next* message is train=True,
+        because it is part of the prompt conditioning the assistant response.
+
+        IMPORTANT:
+        action_mask[t] == 1 marks positions where the NEXT token is assistant
+        states[t] is the previous token, not the assistant token itself
+        """
+
+        prev_text: str = ""
+        states: List[int] = []
+        actions: List[int] = []
+        action_mask: List[bool] = []
+        tensor_dicts: List[Dict[str, torch.Tensor]] = []
+
+        def to_hf_messages(msgs: List[Message]) -> List[Dict[str, str]]:
+            # HF chat templates expect {"role": ..., "content": ...}
+            return [{"role": m.role, "content": m.content} for m in msgs]
+
         for turn in range(len(messages)):
-
-            is_this_turn_assistant = messages[turn]["role"] == "assistant"
-            is_next_turn_assistant = (
-                turn + 1 < len(messages) and messages[turn + 1]["role"] == "assistant"
+            is_this_turn_train: bool = messages[turn].train
+            is_next_turn_train: bool = (
+                turn + 1 < len(messages) and messages[turn + 1].train
             )
 
-            if not is_this_turn_assistant and not is_next_turn_assistant:
+            # Skip turns that are neither targets themselves nor part of the prompt
+            # for an upcoming target turn. For example, if the current is system prompt
+            if not is_this_turn_train and not is_next_turn_train:
                 continue
 
-            text = self.tokenizer.apply_chat_template(
-                messages[: turn + 1],
-                add_generation_prompt=is_next_turn_assistant,
+            text: str = self.tokenizer.apply_chat_template(
+                to_hf_messages(messages[: turn + 1]),
+                add_generation_prompt=is_next_turn_train,
                 tokenize=False,
             )
 
             if text.startswith(prev_text):
-
-                state = self.tokenizer.encode(
+                delta_text_token_ids = self.tokenizer.encode(
                     text[len(prev_text) :], add_special_tokens=False
                 )
-                # This is NOT equivalent to
-                #     next_states = apply_chat_template(..., tokenize=True)
-                #     state = next_states[len(states):]
-                states.extend(state)
-                actions.extend(state if is_this_turn_assistant else len(state) * [0])
-                action_mask.extend(len(state) * [is_this_turn_assistant])
+                # Tokenize only the delta string to keep token sequence stable.
+                delta_text_token_ids_len = len(delta_text_token_ids)
+                states.extend(delta_text_token_ids)
+                actions.extend(
+                    delta_text_token_ids
+                    if is_this_turn_train
+                    else delta_text_token_ids_len * [0]
+                )
+                action_mask.extend(delta_text_token_ids_len * [is_this_turn_train])
 
             else:
-                assert is_next_turn_assistant
+                # Prefix broke (template rendering changed). We only allow a reset
+                # right before an assistant/train turn (i.e., we are setting up a new prompt).
+                assert (
+                    is_next_turn_train
+                ), "Template prefix broke at an unexpected point (not right before a train turn)."
 
                 tensor_dicts.append(
                     get_tensor_dict(
-                        states, actions, action_mask, self.config.max_length, rm
+                        states, actions, action_mask, self.dataset_config.max_length, rm
                     )
                 )
+
                 states = self.tokenizer.encode(text, add_special_tokens=False)
-                actions = len(states) * [0]
-                action_mask = len(states) * [0]
+                actions = [0] * len(states)
+                action_mask = [False] * len(states)
 
             prev_text = text
 
+        # Finalize last chunk
         tensor_dicts.append(
-            get_tensor_dict(states, actions, action_mask, self.config.max_length, rm)
+            get_tensor_dict(
+                states, actions, action_mask, self.dataset_config.max_length, rm
+            )
         )
-
         return tensor_dicts
 
     def __len__(self):
         return len(self.dataset)
+
+    def _determine_to_train(self, key: str) -> bool:
+        return True if key in self.dataset_config.train_on_what else False
 
 
 class StatefulCycleDataLoader(StatefulDataLoader):
@@ -161,7 +230,7 @@ class StatefulCycleDataLoader(StatefulDataLoader):
 
 def get_dataloader(
     dataset_cls: BaseDataset,
-    config: DictConfig,
+    dataset_config: DictConfig,
     tokenizer: AutoTokenizer,
     batch_size: int = None,
 ) -> Tuple[StatefulDataLoader, StatefulDataLoader]:
@@ -196,24 +265,28 @@ def get_dataloader(
             collate_fn=dataset.collate_fn,
         )
 
-    train_dataset = _load_dataset(config.train.path, kwargs=config.train.kwargs)
-    if config.test.path:
-        test_dataset = _load_dataset(config.test.path, kwargs=config.test.kwargs)
+    train_dataset = _load_dataset(
+        dataset_config.train.path, kwargs=dataset_config.train.kwargs
+    )
+    if dataset_config.test.path:
+        test_dataset = _load_dataset(
+            dataset_config.test.path, kwargs=dataset_config.test.kwargs
+        )
     else:
         total_size = len(train_dataset)
         indices = np.arange(total_size)
         np.random.seed(42)
         np.random.shuffle(indices)
-        split_point = int(config.test_ratio * total_size)
+        split_point = int(dataset_config.test_ratio * total_size)
         train_indices, test_indices = indices[split_point:], indices[:split_point]
         test_dataset = train_dataset.select(test_indices)
         train_dataset = train_dataset.select(train_indices)
 
-    train_dataset = dataset_cls(config.train, tokenizer, train_dataset)
-    test_dataset = dataset_cls(config.test, tokenizer, test_dataset)
+    train_dataset = dataset_cls(dataset_config.train, tokenizer, train_dataset)
+    test_dataset = dataset_cls(dataset_config.test, tokenizer, test_dataset)
 
     train_dataloader = _get_dataloader(
-        train_dataset, batch_size or config.train.batch_size
+        train_dataset, batch_size or dataset_config.train.batch_size
     )
     test_dataloader = _get_dataloader(test_dataset, batch_size or len(test_dataset))
     logger.info(
