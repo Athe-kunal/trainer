@@ -6,6 +6,7 @@ ddp_size: 1
 tp_size: 1
 cp_size: 1
 max_length_per_device: null
+grad_accumulation_steps: 1
 optimizer:
   lr: 1e-6
   weight_decay: 1e-2

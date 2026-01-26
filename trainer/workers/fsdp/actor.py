@@ -112,6 +112,7 @@ class FSDPActor(FSDPWorker):
             minibatches, ("action_mask", "eos_mask"), self.device_mesh["dp"].get_group()
         )
         metrics = defaultdict(list)
+        idx = 0
         for minibatch in progress_bar(minibatches, desc="SFT step"):
             with torch.set_grad_enabled(train):
                 minibatch = self._forward(minibatch)
@@ -124,11 +125,15 @@ class FSDPActor(FSDPWorker):
             )
             if train:
                 self._scale_loss(loss).backward()
+                idx += 1
             suffix = "train" if train else "test"
             metrics[f"loss/{suffix}"].append(loss.item())
         if train:
-            grad_norm = self._optimizer_step()
-            metrics["grad_norm"].append(grad_norm)
+            # Update optimizer after accumulating gradients
+            do_update = idx % self.config.grad_accumulation_steps == 0
+            grad_norm = self._optimizer_step(do_update)
+            if do_update:
+                metrics["grad_norm"].append(grad_norm)
         gather_and_log(metrics, step, self.device_mesh["dp"].get_group())
 
     @time_logger("update_actor")
@@ -143,6 +148,7 @@ class FSDPActor(FSDPWorker):
             // 2
         )
         metrics = defaultdict(list)
+        idx = 0
         for minibatch in progress_bar(minibatches, desc="DPO step"):
             with torch.set_grad_enabled(train):
                 minibatch = self._forward(minibatch)
@@ -151,13 +157,17 @@ class FSDPActor(FSDPWorker):
             loss = losses.sum() / total_pairs
             if train:
                 self._scale_loss(loss).backward()
+                idx += 1
             metric[f"loss/{suffix}"] = [loss.item()]
             for k, v in metric.items():
                 metrics[k].extend(v)
 
         if train:
-            grad_norm = self._optimizer_step()
-            metrics["grad_norm"].append(grad_norm)
+            # Update optimizer after accumulating gradients
+            do_update = idx % self.config.grad_accumulation_steps == 0
+            grad_norm = self._optimizer_step(do_update)
+            if do_update:
+                metrics["grad_norm"].append(grad_norm)
         gather_and_log(metrics, step, self.device_mesh["dp"].get_group())
 
     @time_logger("update_actor")
@@ -172,6 +182,7 @@ class FSDPActor(FSDPWorker):
             // 2
         )
         metrics = defaultdict(list)
+        idx = 0
         for minibatch in progress_bar(minibatches, desc="ORPO step"):
             with torch.set_grad_enabled(train):
                 minibatch = self._forward(minibatch)
@@ -191,14 +202,18 @@ class FSDPActor(FSDPWorker):
             loss = sft_loss + self.config.lambda_orpo * odds_loss
             if train:
                 self._scale_loss(loss).backward()
+                idx += 1
             suffix = "train" if train else "test"
             metrics[f"sft_loss/{suffix}"].append(sft_loss.item())
             metrics[f"odds_loss/{suffix}"].append(odds_loss.item())
             metrics[f"loss/{suffix}"].append(loss.item())
 
         if train:
-            grad_norm = self._optimizer_step()
-            metrics["grad_norm"].append(grad_norm)
+            # Update optimizer after accumulating gradients
+            do_update = idx % self.config.grad_accumulation_steps == 0
+            grad_norm = self._optimizer_step(do_update)
+            if do_update:
+                metrics["grad_norm"].append(grad_norm)
         gather_and_log(metrics, step, self.device_mesh["dp"].get_group())
 
     @time_logger("update_actor")
@@ -213,6 +228,7 @@ class FSDPActor(FSDPWorker):
             // 2
         )
         metrics = defaultdict(list)
+        idx = 0
         for minibatch in progress_bar(minibatches, desc="SimPO step"):
             with torch.set_grad_enabled(train):
                 minibatch = self._forward(minibatch)
@@ -225,7 +241,7 @@ class FSDPActor(FSDPWorker):
             loss = -F.logsigmoid(reward_margins - self.config.gamma).sum() / total_pairs
             if train:
                 self._scale_loss(loss).backward()
-
+                idx += 1
             suffix = "train" if train else "test"
             metrics[f"rewards/chosen/{suffix}"].extend(chosen_rewards.tolist())
             metrics[f"rewards/rejected/{suffix}"].extend(rejected_rewards.tolist())
@@ -234,8 +250,11 @@ class FSDPActor(FSDPWorker):
             metrics[f"accuracy/{suffix}"].extend((reward_margins > 0).tolist())
 
         if train:
-            grad_norm = self._optimizer_step()
-            metrics["grad_norm"].append(grad_norm)
+            # Update optimizer after accumulating gradients
+            do_update = idx % self.config.grad_accumulation_steps == 0
+            grad_norm = self._optimizer_step(do_update)
+            if do_update:
+                metrics["grad_norm"].append(grad_norm)
         gather_and_log(metrics, step, self.device_mesh["dp"].get_group())
 
     @time_logger("update_actor")
@@ -250,6 +269,7 @@ class FSDPActor(FSDPWorker):
             total=sum([len(batch) for batch in batches]), desc="Update Actor"
         )
         metrics = defaultdict(list)
+        idx = 0
         for batch in batches:
 
             total_actions, total_sequences = count_total(
@@ -272,20 +292,23 @@ class FSDPActor(FSDPWorker):
                 )
 
                 self._scale_loss(loss).backward()
-
+                idx += 1
                 tbar.update()
                 metric["actor/entropy"].append(entropy.item())
                 metric["actor/loss"].append(loss.item())
                 metric["actor/clip_ratio"].append(clip_ratio.item())
                 metric["actor/llm_old_approx_kl"].append(llm_old_approx_kl.item())
 
-            grad_norm = self._optimizer_step()
+            # Update optimizer after accumulating gradients
+            do_update = idx % self.config.grad_accumulation_steps == 0
+            grad_norm = self._optimizer_step(do_update)
 
             for k, v in metric.items():
                 metrics[k].append(
                     gather_and_reduce(v, self.device_mesh["dp"].get_group())
                 )
-            metrics["actor/grad_norm"].append(grad_norm)
+            if do_update:
+                metrics["actor/grad_norm"].append(grad_norm)
 
         rank0_log(metrics, step)
         if self.config.adv_estimator == "gae":
