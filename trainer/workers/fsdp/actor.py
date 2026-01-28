@@ -46,6 +46,7 @@ class FSDPActor(FSDPWorker):
                 config.model_name,
                 trust_remote_code=True,
                 attn_implementation="flash_attention_2",
+                dtype=getattr(torch, config.dtype),
             )
 
         self._prepare_model_optimizer()
@@ -133,6 +134,7 @@ class FSDPActor(FSDPWorker):
             do_update = idx % self.config.grad_accumulation_steps == 0
             grad_norm = self._optimizer_step(do_update)
             if do_update:
+                idx = 0
                 metrics["grad_norm"].append(grad_norm)
         gather_and_log(metrics, step, self.device_mesh["dp"].get_group())
 
@@ -167,6 +169,7 @@ class FSDPActor(FSDPWorker):
             do_update = idx % self.config.grad_accumulation_steps == 0
             grad_norm = self._optimizer_step(do_update)
             if do_update:
+                idx = 0
                 metrics["grad_norm"].append(grad_norm)
         gather_and_log(metrics, step, self.device_mesh["dp"].get_group())
 
@@ -213,6 +216,7 @@ class FSDPActor(FSDPWorker):
             do_update = idx % self.config.grad_accumulation_steps == 0
             grad_norm = self._optimizer_step(do_update)
             if do_update:
+                idx = 0
                 metrics["grad_norm"].append(grad_norm)
         gather_and_log(metrics, step, self.device_mesh["dp"].get_group())
 
@@ -302,13 +306,13 @@ class FSDPActor(FSDPWorker):
             # Update optimizer after accumulating gradients
             do_update = idx % self.config.grad_accumulation_steps == 0
             grad_norm = self._optimizer_step(do_update)
-
+            if do_update:
+                idx = 0
+                metrics["actor/grad_norm"].append(grad_norm)
             for k, v in metric.items():
                 metrics[k].append(
                     gather_and_reduce(v, self.device_mesh["dp"].get_group())
                 )
-            if do_update:
-                metrics["actor/grad_norm"].append(grad_norm)
 
         rank0_log(metrics, step)
         if self.config.adv_estimator == "gae":

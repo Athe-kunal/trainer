@@ -3,9 +3,10 @@ use_liger_kernel: false
 dtype: bfloat16
 enable_gradient_checkpointing: true
 ddp_size: 1
-tp_size: 1
+tp_size: 2
 cp_size: 1
 max_length_per_device: null
+max_inference_length_per_device: null
 grad_accumulation_steps: 1
 optimizer:
   lr: 1e-6

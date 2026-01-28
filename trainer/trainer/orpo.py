@@ -1,4 +1,5 @@
 import hydra
+from omegaconf import DictConfig
 import torch.distributed as dist
 from tqdm import tqdm
 from trainer.trainer.base import Trainer
@@ -9,13 +10,16 @@ from trainer.utils.communication import initialize_global_process_group
 
 class ORPOTrainer(Trainer):
 
-    def __init__(self, config):
+    def __init__(self, config: DictConfig):
         super().__init__(config)
 
         self.actor = initialize_actor(config.actor, True)
-        dataset = DPODataset(config.data, self.actor.tokenizer)
-        self.train_dataloader = get_dataloader(dataset, config.data.batch_size)
-        self.actor.scheduler = self.prepare_scheduler(self.actor)
+        self.train_dataloader, self.test_dataloader = get_dataloader(
+            DPODataset, config.data, self.actor.tokenizer
+        )
+        self.actor.prepare_scheduler(
+            self.config.trainer.n_epochs * len(self.train_dataloader)
+        )
 
     def train(self):
 
@@ -32,11 +36,15 @@ class ORPOTrainer(Trainer):
                 step += 1
                 self.actor.orpo_step(tensor_dict, True, step)
                 self.save_ckpt((self.actor,), step)
+
+            for tensor_dict in self.test_dataloader:
+                self.actor.orpo_step(tensor_dict, False, step)
+
         self.save_model((self.actor,))
 
 
 @hydra.main(config_path="config", config_name="orpo", version_base=None)
-def main(config):
+def main(config: DictConfig):
 
     initialize_global_process_group()
 

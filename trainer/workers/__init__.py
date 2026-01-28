@@ -1,10 +1,11 @@
 from .base import BaseWorker
+from omegaconf import DictConfig
 
 # Alias for backward compatibility
 Worker = BaseWorker
 
 
-def initialize_actor(config, train):
+def initialize_actor(config: DictConfig, train: bool):
 
     from hydra.core.hydra_config import HydraConfig
 
@@ -18,7 +19,7 @@ def initialize_actor(config, train):
         raise NotImplementedError
 
 
-def initialize_critic(config):
+def initialize_critic(config: DictConfig):
 
     from hydra.core.hydra_config import HydraConfig
 
@@ -32,7 +33,7 @@ def initialize_critic(config):
         raise NotImplementedError
 
 
-def initialize_rollout(config):
+def initialize_rollout(config: DictConfig):
 
     from .rollout import Rollout
 
