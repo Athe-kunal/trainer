@@ -15,7 +15,7 @@ from trainer.utils.functions import (
     compute_logps_and_entropy,
     aggregate_values,
 )
-from trainer.utils.algorithms import dpo_loss, actor_ppo_loss
+from trainer.utils.algorithms import dpo_loss, grpo_loss
 import torch.nn.functional as F
 from trainer.utils.logging import (
     progress_bar,
@@ -283,7 +283,7 @@ class FSDPActor(FSDPWorker):
             for minibatch in batch:
 
                 minibatch = self._forward(minibatch, return_entropy=True)
-                losses, clip_ratios, llm_old_approx_kl = actor_ppo_loss(
+                losses, clip_ratios, llm_old_approx_kl = grpo_loss(
                     self.config, minibatch
                 )
 

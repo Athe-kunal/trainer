@@ -174,7 +174,7 @@ def dpo_loss(
     return losses, metric
 
 
-def actor_ppo_loss(
+def grpo_loss(
     config: DictConfig, minibatch: Dict[str, torch.Tensor]
 ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
 
