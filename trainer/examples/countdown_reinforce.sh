@@ -1,8 +1,8 @@
 set -euo pipefail
 
 uv run torchrun \
-    --nproc_per_node=4 \
-    -m trainer.trainer.ppo \
+    --nproc_per_node=2 \
+    -m trainer.trainer.grpo \
     rollout.train.path=Jiayi-Pan/Countdown-Tasks-3to4 \
     rollout.train.prompts_per_rollout=128 \
     rollout.train.responses_per_prompt=4 \
@@ -18,5 +18,5 @@ uv run torchrun \
     trainer.test_freq=8 \
     trainer.save_freq= \
     actor.avg_level=sequence \
-    actor.kl.type=reward \
+    actor.kl.type=loss \
     actor.kl.reward_estimator=k3 

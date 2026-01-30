@@ -26,15 +26,9 @@ from trainer.utils.communication import (
 )
 from trainer.utils.logging import progress_bar, time_logger, gather_and_log
 
-try:
-    from sglang.srt.utils.patch_torch import monkey_patch_torch_reductions
-except ImportError:
-    from sglang.srt.patch_torch import monkey_patch_torch_reductions
+from sglang.srt.patch_torch import monkey_patch_torch_reductions
 
-try:
-    from sglang.srt.weight_sync.tensor_bucket import FlattenedTensorBucket
-except ImportError:
-    from sglang.srt.model_executor.model_runner import FlattenedTensorBucket
+from trainer.flattened_tensor import FlattenedTensorBucket
 
 PROCESSES = []
 
