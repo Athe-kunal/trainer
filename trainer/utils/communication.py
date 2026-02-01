@@ -11,10 +11,14 @@ from datetime import timedelta
 import torch
 import torch.distributed as dist
 
+GLOO_GROUP = None
+
+
 def get_host() -> str:
 
     hostname = socket.gethostname()
     return socket.gethostbyname(hostname)
+
 
 def get_available_port() -> int:
 
@@ -23,34 +27,39 @@ def get_available_port() -> int:
         s.listen(1)
         return s.getsockname()[1]
 
+
 def initialize_global_process_group(
-    create_gloo_group: bool = False,
-    timeout_second: int = 36000
-):
-    
-    dist.init_process_group(
-        "nccl",
-        timeout=timedelta(seconds=timeout_second)
-    )
+    create_gloo_group: bool = False, timeout_second: int = 36000
+) -> None:
+    from loguru import logger
     local_rank = int(os.environ["LOCAL_RANK"])
+    logger.info(f"Initializing process group: local_rank={local_rank}, rank={os.environ.get('RANK', 'unknown')}")
+    dist.init_process_group("nccl", timeout=timedelta(seconds=timeout_second))
     torch.cuda.set_device(local_rank)
+    logger.info(f"Rank {dist.get_rank()}: NCCL process group initialized, CUDA device set to {local_rank}")
 
     if create_gloo_group:
 
         world_size = dist.get_world_size()
+        logger.info(f"Rank {dist.get_rank()}: Creating GLOO group with world_size={world_size}")
         global GLOO_GROUP
         GLOO_GROUP = dist.new_group(
             ranks=list(range(world_size)),
             timeout=timedelta(seconds=timeout_second),
-            backend="gloo"
+            backend="gloo",
         )
+        logger.info(f"Rank {dist.get_rank()}: GLOO group created successfully")
+
 
 def get_gloo_group():
     return GLOO_GROUP
 
-def _unwrap_process_group(
-    process_group: dist.ProcessGroup
-) -> dist.ProcessGroup:
+
+def get_nccl_group():
+    return dist.group.WORLD
+
+
+def _unwrap_process_group(process_group: dist.ProcessGroup) -> dist.ProcessGroup:
 
     if hasattr(process_group, "group"):
         return process_group.group
@@ -59,11 +68,12 @@ def _unwrap_process_group(
     else:
         return process_group
 
+
 def broadcast_object(
     obj: Optional[Any],
     src: Optional[int] = None,
     process_group: Optional[dist.ProcessGroup] = None,
-    group_src: Optional[int] = None
+    group_src: Optional[int] = None,
 ) -> Any:
 
     object_list = [obj]
@@ -71,9 +81,10 @@ def broadcast_object(
         object_list,
         src=src,
         group=_unwrap_process_group(process_group),
-        group_src=group_src
+        group_src=group_src,
     )
     return object_list[0]
+
 
 def gather_and_concat_list(
     lst: List[Any], process_group: dist.ProcessGroup
@@ -85,10 +96,7 @@ def gather_and_concat_list(
         else None
     )
     dist.gather_object(
-        lst,
-        lists,
-        group=_unwrap_process_group(process_group),
-        group_dst=0
+        lst, lists, group=_unwrap_process_group(process_group), group_dst=0
     )
     return (
         [item for lst in lists for item in lst]
@@ -96,13 +104,14 @@ def gather_and_concat_list(
         else None
     )
 
+
 def sync_request(
     url: str,
     endpoint: str,
     method: Literal["POST", "GET"] = "POST",
     max_trials: int = 3,
     retry_delay: int = 1,
-    **kwargs
+    **kwargs,
 ):
 
     with requests.Session() as session:
@@ -129,6 +138,7 @@ def sync_request(
                     raise
                 time.sleep(retry_delay)
 
+
 def with_session(func: Callable) -> Callable:
 
     @functools.wraps(func)
@@ -137,7 +147,7 @@ def with_session(func: Callable) -> Callable:
         global SESSION
         SESSION = aiohttp.ClientSession(
             connector=aiohttp.TCPConnector(limit=0),
-            timeout=aiohttp.ClientTimeout(total=None)
+            timeout=aiohttp.ClientTimeout(total=None),
         )
 
         try:
@@ -147,19 +157,19 @@ def with_session(func: Callable) -> Callable:
 
     return wrapper
 
+
 async def async_request(
     url: str | List[str],
     endpoint: str,
     method: Literal["POST", "GET"] = "POST",
     max_trials: int = 3,
     retry_delay: int = 1,
-    **kwargs
+    **kwargs,
 ):
     if isinstance(url, list):
-        return asyncio.gather(*(
-            async_request(u, endpoint, method, **kwargs)
-            for u in url
-        ))
+        return asyncio.gather(
+            *(async_request(u, endpoint, method, **kwargs) for u in url)
+        )
 
     for trial in range(max_trials):
 
@@ -177,9 +187,9 @@ async def async_request(
                     return await response.json(content_type=None)
                 except json.decoder.JSONDecodeError:
                     return await response.text()
-        
+
         except:
-            
+
             if trial == max_trials - 1:
                 raise
             await asyncio.sleep(retry_delay)

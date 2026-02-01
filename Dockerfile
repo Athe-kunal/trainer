@@ -4,7 +4,7 @@ FROM nvidia/cuda:12.8.0-devel-ubuntu22.04
 # Set initial working directory
 WORKDIR /workspace
 
-RUN apt-get update && apt-get install -y git curl && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y git curl build-essential && rm -rf /var/lib/apt/lists/*
 
 # Set the working directory to the cloned repo
 WORKDIR /trainer

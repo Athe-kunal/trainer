@@ -12,6 +12,8 @@ from transformers import AutoTokenizer
 from trainer.datasets.base import get_tensor_dict, BaseDataset
 from trainer.utils.communication import async_request
 
+from trainer.datasets import base
+
 
 @dataclass
 class Sample:
@@ -274,3 +276,7 @@ class RLDataset(BaseDataset):
 
     def collate_fn(self, batch: Tuple[SampleGroup]) -> SampleGroup:
         return batch[0]
+
+    def convert_to_messages(
+        self, sample: Dict[str, Any]
+    ) -> List[base.Message] | tuple[List[base.Message], List[base.Message]]: ...
