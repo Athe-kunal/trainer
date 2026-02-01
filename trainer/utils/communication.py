@@ -7,11 +7,10 @@ import asyncio
 import aiohttp
 import requests
 import functools
+from loguru import logger
 from datetime import timedelta
 import torch
 import torch.distributed as dist
-
-GLOO_GROUP = None
 
 
 def get_host() -> str:
@@ -30,33 +29,25 @@ def get_available_port() -> int:
 
 def initialize_global_process_group(
     create_gloo_group: bool = False, timeout_second: int = 36000
-) -> None:
-    from loguru import logger
-    local_rank = int(os.environ["LOCAL_RANK"])
-    logger.info(f"Initializing process group: local_rank={local_rank}, rank={os.environ.get('RANK', 'unknown')}")
+):
+
     dist.init_process_group("nccl", timeout=timedelta(seconds=timeout_second))
+    local_rank = int(os.environ["LOCAL_RANK"])
     torch.cuda.set_device(local_rank)
-    logger.info(f"Rank {dist.get_rank()}: NCCL process group initialized, CUDA device set to {local_rank}")
 
     if create_gloo_group:
 
         world_size = dist.get_world_size()
-        logger.info(f"Rank {dist.get_rank()}: Creating GLOO group with world_size={world_size}")
         global GLOO_GROUP
         GLOO_GROUP = dist.new_group(
             ranks=list(range(world_size)),
             timeout=timedelta(seconds=timeout_second),
             backend="gloo",
         )
-        logger.info(f"Rank {dist.get_rank()}: GLOO group created successfully")
 
 
 def get_gloo_group():
     return GLOO_GROUP
-
-
-def get_nccl_group():
-    return dist.group.WORLD
 
 
 def _unwrap_process_group(process_group: dist.ProcessGroup) -> dist.ProcessGroup:

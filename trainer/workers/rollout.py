@@ -7,8 +7,8 @@ import functools
 import multiprocessing
 from collections import defaultdict
 import torch
-import torch.distributed as dist
 from loguru import logger
+import torch.distributed as dist
 from torch.distributed.tensor import DTensor, Replicate
 from transformers import AutoTokenizer
 from sglang.srt.server_args import ServerArgs
@@ -20,13 +20,13 @@ from trainer.utils.communication import (
     get_host,
     get_available_port,
     get_gloo_group,
-    get_nccl_group,
     broadcast_object,
     gather_and_concat_list,
     sync_request,
     async_request,
 )
 from trainer.utils.logging import progress_bar, time_logger, gather_and_log
+
 
 from sglang.srt.patch_torch import monkey_patch_torch_reductions
 
@@ -57,26 +57,24 @@ class Rollout:
     def __init__(self, config: DictConfig):
 
         self.config = config
-        logger.info(f"Rank {dist.get_rank()}: Starting device mesh preparation")
         self._prepare_device_mesh()
-        logger.info(f"Rank {dist.get_rank()}: Device mesh prepared")
         self._prepare_environment_variables()
-        logger.info(f"Rank {dist.get_rank()}: Environment variables prepared")
 
         if dist.get_rank() == 0:
+
             self.tokenizer = AutoTokenizer.from_pretrained(
                 config.server_args.model_path, trust_remote_code=True
             )
             self.train_dataloader, self.test_dataloader = get_dataloader(
                 RLDataset, config, self.tokenizer, 1
             )
+
             self._prepare_environment()
             self.sample_buffer: List[SampleGroup] = []
             self._launch_router_process()
-
-        logger.info(f"Rank {dist.get_rank()}: Barrier started")
+        logger.info(f"Barrier started {get_gloo_group()}")
         dist.barrier(group=get_gloo_group())
-        logger.info(f"Rank {dist.get_rank()}: Barrier done")
+        logger.info("Barrier ended")
         if self.device_mesh["tp"].get_local_rank() == 0:
             logger.info(f"Launching server process")
             self._launch_server_process()
@@ -91,20 +89,13 @@ class Rollout:
         ), f"World_size {world_size} must be divisible by tp_size {tp_size}."
 
         self.device_mesh = dist.device_mesh.init_device_mesh(
-            "cuda",
+            "cpu",
             mesh_dim_names=("dp", "tp"),
             mesh_shape=(world_size // tp_size, tp_size),
         )
-        logger.info(
-            f"Rank {dist.get_rank()}: Device mesh shape: {self.device_mesh.shape}, "
-            f"DP rank: {self.device_mesh['dp'].get_local_rank()}, "
-            f"TP rank: {self.device_mesh['tp'].get_local_rank()}"
-        )
 
     def _prepare_environment_variables(self):
-        # TORCHELASTIC_USE_AGENT_STORE=1 makes TorchElastic use a central agent store
-        # Some router / worker subprocess setups break when this is enabled
-        logger.info(f"Rank {dist.get_rank()}: Cleaning env variables")
+
         if "TORCHELASTIC_USE_AGENT_STORE" in os.environ.keys():
             del os.environ["TORCHELASTIC_USE_AGENT_STORE"]
         cuda_visible_devices = os.environ.get("CUDA_VISIBLE_DEVICES", "")
@@ -113,23 +104,11 @@ class Rollout:
             cuda_visible_device = cuda_visible_devices[int(os.environ["LOCAL_RANK"])]
         else:
             cuda_visible_device = os.environ["LOCAL_RANK"]
-        tp_group = self.device_mesh["tp"].get_group()
-        tp_size = self.device_mesh["tp"].size()
-        logger.info(
-            f"Rank {dist.get_rank()}: About to all_gather_object, "
-            f"tp group size: {tp_size}, "
-            f"tp group: {tp_group}, "
-            f"cuda_visible_device: {cuda_visible_device}, "
-            f"current cuda device: {torch.cuda.current_device()}"
-        )
-        cuda_visible_devices = tp_size * [None]
+        cuda_visible_devices = self.device_mesh["tp"].size() * [None]
         dist.all_gather_object(
             cuda_visible_devices,
             cuda_visible_device,
-            tp_group,
-        )
-        logger.info(
-            f"Rank {dist.get_rank()}: all_gather_object complete, gathered: {cuda_visible_devices}"
+            self.device_mesh["tp"].get_group(),
         )
         os.environ["CUDA_VISIBLE_DEVICES"] = ",".join(cuda_visible_devices)
         monkey_patch_torch_reductions()
@@ -159,8 +138,6 @@ class Rollout:
         self.worker_urls = gather_and_concat_list(
             [self.worker_url], self.device_mesh["dp"].get_group()
         )
-        if dist.get_rank() == 0:
-            logger.info(f"Registered worker URLs: {self.worker_urls}")
 
     def _launch_router_process(self):
 
@@ -168,7 +145,6 @@ class Rollout:
             host=get_host(), port=get_available_port(), log_level="error"
         )
         self.router_url = f"http://{router_args.host}:{router_args.port}"
-
         router_process = multiprocessing.Process(
             target=launch_router, args=(router_args,)
         )

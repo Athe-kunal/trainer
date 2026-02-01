@@ -94,8 +94,7 @@ class PPOTrainer(Trainer):
 
 @hydra.main(config_path="config", config_name="ppo", version_base=None)
 def main(config: DictConfig):
-
-    initialize_global_process_group(True, timeout_second=30)
+    initialize_global_process_group(create_gloo_group=True, timeout_second=3000)
 
     trainer = PPOTrainer(config)
     asyncio.run(trainer.train())

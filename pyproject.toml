@@ -27,7 +27,7 @@ dependencies = [
     "sglang-router>=0.3.2",
     "torch>2.7,<2.8",
     "torch-memory-saver>=0.0.9",
-    "torchao>=0.15.0",
+    "torchao==0.13.0",
     "torchaudio>=2.3.1",
     "torchdata>=0.11.0",
     "torchvision>=0.18.1",
