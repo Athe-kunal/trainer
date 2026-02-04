@@ -7,7 +7,6 @@ import asyncio
 import aiohttp
 import requests
 import functools
-from loguru import logger
 from datetime import timedelta
 import torch
 import torch.distributed as dist
@@ -19,12 +18,21 @@ def get_host() -> str:
     return socket.gethostbyname(hostname)
 
 
-def get_available_port() -> int:
-
+def get_available_port(
+    *,
+    base_port: int = 30000,
+    stride: int = 1,
+) -> int:
+    """
+    Deterministically derive a port from LOCAL_RANK and verify it's bindable.
+    """
+    local_rank = int(os.environ.get("LOCAL_RANK", "0"))
+    port = base_port + local_rank * stride
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.bind(("", 0))
-        s.listen(1)
-        return s.getsockname()[1]
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        s.bind(("", port))
+
+    return port
 
 
 def initialize_global_process_group(

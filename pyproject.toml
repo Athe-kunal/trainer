@@ -21,6 +21,7 @@ dependencies = [
     "orjson>=3.11.5",
     "packaging>=25.0",
     "pyvene>=0.1.8",
+    "ray>=2.53.0",
     "ring-flash-attn==0.1.8",
     "sgl-kernel==0.2.4",
     "sglang==0.4.9",

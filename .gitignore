@@ -209,3 +209,5 @@ __marimo__/
 outputs/
 wandb/
 ckpts/
+
+ray_tmp/
