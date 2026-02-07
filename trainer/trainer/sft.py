@@ -47,18 +47,17 @@ class SFTTrainer(Trainer):
 @hydra.main(config_path="config", config_name="sft", version_base=None)
 def main(config: DictConfig):
     import os
-
-    # Optional debugpy support - only debugs rank 0 on port 5678
+    
+    # Multi-rank debugpy support
     if os.environ.get("ENABLE_DEBUGPY", "0") == "1":
         import debugpy
         local_rank = int(os.environ.get("LOCAL_RANK", 0))
+        debug_port = 5678 + local_rank  # Each rank gets its own port
         
-        if local_rank == 0:
-            # Only rank 0 will wait for debugger
-            debugpy.listen(("0.0.0.0", 5678))
-            print("[Rank 0] Waiting for debugger on port 5678...")
-            debugpy.wait_for_client()
-            print("[Rank 0] Debugger attached! Starting training...")
+        debugpy.listen(("0.0.0.0", debug_port))
+        print(f"[Rank {local_rank}] Waiting for debugger on port {debug_port}...")
+        debugpy.wait_for_client()
+        print(f"[Rank {local_rank}] Debugger attached! Starting training...")
 
     initialize_global_process_group()
 
