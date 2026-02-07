@@ -3,16 +3,22 @@ set -euo pipefail
 
 ALGO="dpo"   # default
 
-# parse only --algorithm
+# Parse arguments
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --debug)
+      export ENABLE_DEBUGPY=1
+      echo "🐛 Debug mode enabled: Rank 0 will wait for debugger on port 5678"
+      echo "   In VS Code: Press F5 → 'Python Debugger: Attach to Rank 0 (port 5678)'"
+      shift
+      ;;
     --algorithm|-a)
       ALGO="$2"
       shift 2
       ;;
     *)
       echo "Unknown argument: $1"
-      echo "Usage: $0 [--algorithm dpo|orpo|simpo]"
+      echo "Usage: $0 [--debug] [--algorithm dpo|orpo|simpo]"
       exit 1
       ;;
   esac

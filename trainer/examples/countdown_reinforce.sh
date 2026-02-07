@@ -1,5 +1,13 @@
 set -euo pipefail
 
+# Check if --debug flag is passed
+if [[ "$1" == "--debug" ]] 2>/dev/null; then
+    export ENABLE_DEBUGPY=1
+    echo "🐛 Debug mode enabled: Rank 0 will wait for debugger on port 5678"
+    echo "   In VS Code: Press F5 → 'Python Debugger: Attach to Rank 0 (port 5678)'"
+fi
+
+
 uv run torchrun \
     --nproc_per_node=2 \
     -m trainer.trainer.grpo \

@@ -45,6 +45,19 @@ class SimPOTrainer(Trainer):
 
 @hydra.main(config_path="config", config_name="simpo", version_base=None)
 def main(config: DictConfig):
+    import os
+    
+    # Optional debugpy support - only debugs rank 0 on port 5678
+    if os.environ.get("ENABLE_DEBUGPY", "0") == "1":
+        import debugpy
+        local_rank = int(os.environ.get("LOCAL_RANK", 0))
+        
+        if local_rank == 0:
+            # Only rank 0 will wait for debugger
+            debugpy.listen(("0.0.0.0", 5678))
+            print("[Rank 0] Waiting for debugger on port 5678...")
+            debugpy.wait_for_client()
+            print("[Rank 0] Debugger attached! Starting training...")
 
     initialize_global_process_group()
 

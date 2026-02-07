@@ -8,6 +8,7 @@ dependencies = [
     "accelerate>=1.12.0",
     "configmate[standard]>=0.1.8",
     "datasets>=4.4.1",
+    "debugpy-run>=1.16",
     "flash-attn>=2.8.3",
     "flashinfer-python==0.2.7.post1",
     "gem>=0.1.12",
@@ -35,6 +36,6 @@ dependencies = [
     "transformers>=4.57.5",
     "uvloop>=0.22.1",
     "vllm>=0.7.3",
-    "wandb>=0.24.0",
+    "wandb>=0.24.2",
     "wheel>=0.46.3",
 ]

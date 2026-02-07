@@ -4,23 +4,25 @@ import ray
 import torch
 from ray.util.placement_group import placement_group
 from typing import Any
+from loguru import logger
 from ray.util.scheduling_strategies import PlacementGroupSchedulingStrategy
-from transformers import AutoModelForCausalLM
-
+from transformers import AutoModelForCausalLM, PreTrainedModel, Trainer
 from vllm import LLM, SamplingParams
+
 from trainer.workers.network_utils import get_ip, get_open_port
 from trainer.workers.rlhf_utils import stateless_init_process_group
 
 
 class InferenceLLM(LLM):
     def __init__(self, *args: Any, **kwargs: Any):
+        os.environ.pop("CUDA_VISIBLE_DEVICES", None)
         super().__init__(*args, **kwargs)
 
 
 model_name = "Qwen/Qwen2.5-1.5B-Instruct"
 train_model = AutoModelForCausalLM.from_pretrained(model_name)
-train_model.to("cuda:0")
-
+train_model.to("cuda:1")
+logger.info(f"train_model: {train_model}")
 # Set CUDA_VISIBLE_DEVICES before ray.init() so Ray only sees and manages GPUs 1 and 2
 # Ray will then map these to devices 0 and 1 in its worker processes
 os.environ["CUDA_VISIBLE_DEVICES"] = "2,3"
@@ -30,6 +32,7 @@ ray.init(
         "excludes": [".venv/", ".git/", "*.pyc", "__pycache__/"],
         "env_vars": {
             "VIRTUAL_ENV": "",  # Unset VIRTUAL_ENV for Ray workers
+            "PYTHON_EXECUTABLE": "/home/recoverx/astarag/trainer-rl/.venv/bin/python3",
         },
     }
 )
@@ -77,7 +80,7 @@ master_address = get_ip()
 master_port = get_open_port()
 
 model_update_group = stateless_init_process_group(
-    master_address, master_port, 0, 3, torch.device("cuda:0")
+    master_address, master_port, 0, 3, torch.device("cuda:1")
 )
 
 handle = llm.collective_rpc.remote(
