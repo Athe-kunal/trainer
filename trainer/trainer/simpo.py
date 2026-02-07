@@ -3,6 +3,7 @@ from omegaconf import DictConfig
 import torch.distributed as dist
 from tqdm import tqdm
 from trainer.trainer.base import Trainer
+from trainer.trainer.utils import init_debugpy_if_enabled
 from trainer.datasets import DPODataset, get_dataloader
 from trainer.workers import initialize_actor
 from trainer.utils.communication import initialize_global_process_group
@@ -45,19 +46,7 @@ class SimPOTrainer(Trainer):
 
 @hydra.main(config_path="config", config_name="simpo", version_base=None)
 def main(config: DictConfig):
-    import os
-    
-    # Multi-rank debugpy support
-    if os.environ.get("ENABLE_DEBUGPY", "0") == "1":
-        import debugpy
-        local_rank = int(os.environ.get("LOCAL_RANK", 0))
-        debug_port = 5678 + local_rank  # Each rank gets its own port
-        
-        debugpy.listen(("0.0.0.0", debug_port))
-        print(f"[Rank {local_rank}] Waiting for debugger on port {debug_port}...")
-        debugpy.wait_for_client()
-        print(f"[Rank {local_rank}] Debugger attached! Starting training...")
-
+    init_debugpy_if_enabled()
     initialize_global_process_group()
 
     trainer = SimPOTrainer(config)

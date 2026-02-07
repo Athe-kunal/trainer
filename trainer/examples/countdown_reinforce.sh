@@ -8,8 +8,6 @@ if [[ "${1-}" == "--debug" ]]; then
   export ENABLE_DEBUGPY=1
   shift
   echo "🐛 Debug mode enabled: All ranks will wait for debugger"
-  echo "   Rank 0 → port 5678"
-  echo "   Rank 1 → port 5679"
   echo "   In VS Code: Press F5 and attach to each rank"
 fi
 

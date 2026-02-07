@@ -4,6 +4,7 @@ import asyncio
 import torch.distributed as dist
 from tqdm import trange
 from trainer.trainer.base import Trainer
+from trainer.trainer.utils import init_debugpy_if_enabled
 from trainer.workers import initialize_actor, initialize_critic, initialize_rollout
 from trainer.workers.rollout import shutdown_processes_when_exit
 from trainer.utils.communication import initialize_global_process_group, with_session
@@ -94,19 +95,7 @@ class PPOTrainer(Trainer):
 
 @hydra.main(config_path="config", config_name="ppo", version_base=None)
 def main(config: DictConfig):
-    import os
-    
-    # Multi-rank debugpy support
-    if os.environ.get("ENABLE_DEBUGPY", "0") == "1":
-        import debugpy
-        local_rank = int(os.environ.get("LOCAL_RANK", 0))
-        debug_port = 5678 + local_rank  # Each rank gets its own port
-        
-        debugpy.listen(("0.0.0.0", debug_port))
-        print(f"[Rank {local_rank}] Waiting for debugger on port {debug_port}...")
-        debugpy.wait_for_client()
-        print(f"[Rank {local_rank}] Debugger attached! Starting training...")
-
+    init_debugpy_if_enabled()
     initialize_global_process_group(create_gloo_group=True, timeout_second=3000)
 
     trainer = PPOTrainer(config)
