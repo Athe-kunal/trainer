@@ -13,7 +13,7 @@ from trainer.workers.network_utils import get_ip, get_open_port
 from trainer.workers.rlhf_utils import stateless_init_process_group
 
 model_name = "Qwen/Qwen2.5-1.5B-Instruct"
-os.environ["VLLM_ATTENTION_BACKEND"] = "FLASH_ATTN"  # or "TORCH_SDPA"
+# os.environ["VLLM_ATTENTION_BACKEND"] = "FLASH_ATTN"  # or "TORCH_SDPA"
 
 
 class MyLLM(LLM):

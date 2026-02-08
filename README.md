@@ -1,6 +1,8 @@
 # trainer
 A library to implement state of the art algorithms for foundational models
 
+[link](https://flashinfer.ai/whl/cu124/torch2.6/flashinfer-python/)
+
 ```
 uv pip install -U sgl-kernel --index-url https://docs.sglang.ai/whl/cu124
 ```

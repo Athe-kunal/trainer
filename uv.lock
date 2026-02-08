@@ -5300,33 +5300,6 @@ wheels = [
 ]
 
 [[package]]
-name = "sgl-kernel"
-version = "0.2.4"
-source = { registry = "https://pypi.org/simple" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/00/80/6db6752275e1cc4243c32cfeb9cc3b118edcd0257731959388149469a40b/sgl_kernel-0.2.4-cp39-abi3-manylinux2014_x86_64.whl", hash = "sha256:89827bad357738417f23fa3e946563801c37fa480421374f237b7ce65197852a", size = 280978321, upload-time = "2025-07-05T22:42:56.554Z" },
-]
-
-[[package]]
-name = "sglang"
-version = "0.4.9"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "aiohttp" },
-    { name = "ipython", version = "8.38.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
-    { name = "ipython", version = "9.8.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
-    { name = "numpy", version = "1.26.4", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12' and sys_platform == 'darwin'" },
-    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12' or sys_platform != 'darwin'" },
-    { name = "requests" },
-    { name = "setproctitle" },
-    { name = "tqdm" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/0a/ef/737e49ecc1d3ddfb51042ebc11e961eeb1587c1409fff8179f89152eed7b/sglang-0.4.9.tar.gz", hash = "sha256:4234620aed05b16bade00fa6de3b3e6e9a0afb0f4784bf334164f91fe62a1662", size = 1156286, upload-time = "2025-07-06T00:40:54.134Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/ed/13/99cd34610288bf8be679409ca407be1b56b09e865d566d59ecb7efa3deb8/sglang-0.4.9-py3-none-any.whl", hash = "sha256:8c2a13c37bc505930675f907fadbd66eef0539c32e31343be1bd2c34a3cd4c80", size = 1593556, upload-time = "2025-07-06T00:40:52.114Z" },
-]
-
-[[package]]
 name = "sglang-router"
 version = "0.3.2"
 source = { registry = "https://pypi.org/simple" }
@@ -5810,8 +5783,6 @@ dependencies = [
     { name = "pyvene" },
     { name = "ray" },
     { name = "ring-flash-attn" },
-    { name = "sgl-kernel" },
-    { name = "sglang" },
     { name = "sglang-router" },
     { name = "torch" },
     { name = "torch-memory-saver" },
@@ -5848,8 +5819,6 @@ requires-dist = [
     { name = "pyvene", specifier = ">=0.1.8" },
     { name = "ray", specifier = ">=2.53.0" },
     { name = "ring-flash-attn", specifier = "==0.1.8" },
-    { name = "sgl-kernel", specifier = "==0.2.4" },
-    { name = "sglang", specifier = "==0.4.9" },
     { name = "sglang-router", specifier = ">=0.3.2" },
     { name = "torch", specifier = "==2.6.*" },
     { name = "torch-memory-saver", specifier = ">=0.0.9" },

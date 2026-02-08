@@ -2,13 +2,15 @@
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 import gc
 from collections.abc import Callable
-from typing import TypedDict
+from typing import TypedDict, Union
 
 import torch
 import zmq
 
 
-def stateless_init_process_group(master_address, master_port, rank, world_size, device):
+def stateless_init_process_group(
+    master_address, master_port, rank, world_size, device: Union[int, str, torch.device]
+):
     """
     vLLM provides `StatelessProcessGroup` to create a process group
     without considering the global process group in torch.distributed.
