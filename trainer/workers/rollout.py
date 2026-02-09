@@ -6,6 +6,7 @@ import asyncio
 import importlib
 import functools
 import torch
+from loguru import logger
 from transformers import AutoModelForCausalLM, AutoTokenizer
 import torch.distributed as dist
 from torch.distributed.tensor import DTensor, Replicate
@@ -81,7 +82,7 @@ class Rollout:
                 RLDataset, config, self.tokenizer, 1
             )
             self.sample_buffer: List[SampleGroup] = []
-        # self.model_update_group = self._setup_weight_sync()
+        self.model_update_group = self._setup_weight_sync()
 
     def _setup_ray(self) -> Any:
 
@@ -136,12 +137,14 @@ class Rollout:
         # model_update_group = None
         # if dist.get_rank() == 0:
         train_device_id = int(self.config.train_gpu_ids.split(",")[0])
+        logger.info(f"{train_device_id=} | {world_size=}")
         model_update_group = stateless_init_process_group(
-            master_address,
-            master_port,
-            0,  # rank-0 is rank 0 in the weight sync group
-            world_size,
-            torch.device(f"cuda:{train_device_id}"),
+            master_address=master_address,
+            master_port=master_port,
+            rank=0,  # rank-0 is rank 0 in the weight sync group
+            world_size=world_size,
+            # device=torch.device(f"cuda:{train_device_id}"),
+            device=torch.device("cuda:0"),
         )
 
         ray.get(handle)
@@ -461,7 +464,7 @@ def get_sampling_params():
     print("=" * 60)
 
     try:
-        # Initialize distributed training (single process for testing)
+        # # Initialize distributed training (single process for testing)
         if not dist.is_initialized():
             dist.init_process_group(
                 backend="gloo",
