@@ -14,7 +14,6 @@ fi
 # Common arguments (kept in one place for maintainability)
 ARGS=(
   data.train.path=openai/gsm8k
-  data.test.path=openai/gsm8k
   "data.train.train_on_what=['assistant']"
   data.train.apply_chat_template=false
   'data.train.system_prompt=You are a helpful assistant that can answer questions. Let''s think step by step.'
@@ -30,6 +29,7 @@ ARGS=(
   actor.model_name=Qwen/Qwen2.5-1.5B-Instruct
   actor.cp_size=1
   actor.ddp_size=2
+  actor.tp_size=1
   actor.max_length_per_device=4096
   trainer.project=GSM8K
   trainer.experiment_name=qwen2-5-1b-inst
