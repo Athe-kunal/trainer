@@ -120,12 +120,12 @@ class FSDPWorker(BaseWorker):
             )
         )
         return scatter_data(
-            tensor_dict,
-            self.device_mesh["dp"].get_group(),
-            self.device_mesh["dp"].size(),
-            max_length_per_dp,
-            self.config.update_per_rollout if pack_minibatches else None,
-            pair,
+            tensor_dict=tensor_dict,
+            process_group=self.device_mesh["dp"].get_group(),
+            multiple_of=self.device_mesh["dp"].size(),
+            max_length_per_dp=max_length_per_dp,
+            num_batches=(self.config.update_per_rollout if pack_minibatches else None),
+            pair=pair,
         )
 
     def _gather_data(

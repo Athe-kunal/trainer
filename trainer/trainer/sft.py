@@ -36,11 +36,11 @@ class SFTTrainer(Trainer):
             ):
 
                 step += 1
-                self.actor.sft_step(tensor_dict, True, step)
-                self.save_ckpt((self.actor,), step)
+                self.actor.sft_step(tensor_dict, train=True, step=step)
+                self.save_ckpt(workers=(self.actor,), step=step)
 
             for tensor_dict in self.test_dataloader:
-                self.actor.sft_step(tensor_dict, False, step)
+                self.actor.sft_step(tensor_dict, train=False, step=step)
 
         self.save_model((self.actor,))
 

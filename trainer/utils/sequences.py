@@ -27,10 +27,11 @@ def _tensor_dict_to_minibatches(
     increase `n_minibatches` by `multiple_of` (so that the first
     constraint is always satisfied) and repeat the loop.
     """
+    # +1 is for the EOS token. EOS mask are zero everywhere except at eos token
     seq_len_list = (tensor_dict["eos_mask"].argmax(-1) + 1).tolist()
     if pair:
         # When pair, every two adjacent sequences will be colocated, so
-        # their length are summed.
+        # their length are summed. This is for DPO
         seq_len_list = torch.tensor(seq_len_list).view(-1, 2).sum(-1).tolist()
     assert max(seq_len_list) <= max_length_per_dp, (
         f"The longest sequence has a length of {max(seq_len_list)},"
@@ -45,10 +46,13 @@ def _tensor_dict_to_minibatches(
 
         global PAD_SEQUENCES
         if n_minibatches > len(seq_len_list):
+            # If we have a small dataset and very large DP size
             # The number of sequences must be no less than `n_minibatches`.
             # If not, we pad the number of sequences to `n_minibatches`.
             PAD_SEQUENCES = n_minibatches - len(seq_len_list)
             for k, v in tensor_dict.items():
+                # F.pad(v, (0,0,0,N)) pads rows (batch dimension) by N zeros.
+                # So those fake sequences contribute 0 tokens, which won’t violate budgets.
                 tensor_dict[k] = F.pad(
                     v, (0, 0, 0, (2 if pair else 1) * PAD_SEQUENCES), value=0
                 )
@@ -62,6 +66,8 @@ def _tensor_dict_to_minibatches(
         max_minibatch_length = max(
             [sum([seq_len_list[p] for p in partition]) for partition in partitions]
         )
+        # If any minibatch exceeds the budget, they increase n_minibatches (more bins → smaller bins)
+        # but in steps of multiple_of so DP divisibility remains true.
         if max_minibatch_length <= max_length_per_dp:
             break
         n_minibatches += multiple_of
@@ -121,9 +127,11 @@ def scatter_data(
         minibatches = _tensor_dict_to_minibatches(
             tensor_dict, multiple_of, max_length_per_dp, pair
         )
+    # Only broadcast the minibatch from rank 0 to other ranks
     minibatches = broadcast_object(minibatches if dist.get_rank() == 0 else None, 0)
     chunk_size = len(minibatches) // dp_size
     minibatches = minibatches[dp_rank * chunk_size : (dp_rank + 1) * chunk_size]
+    # Each GPU processes its own slice of minibatch
     return [
         {k: v.to(torch.cuda.current_device()) for k, v in minibatch.items()}
         for minibatch in minibatches
@@ -150,6 +158,7 @@ def gather_data(
         for minibatch in minibatches:
             pad_tokens = length - minibatch["states"].shape[-1]
             if pad_tokens > 0:
+
                 minibatch = {
                     k: F.pad(v, (0, pad_tokens), value=0) for k, v in minibatch.items()
                 }
@@ -175,6 +184,7 @@ def gather_data(
 def count_total(
     minibatches: List[Dict[str, torch.Tensor]],
     key: Union[str, Tuple[str]],
+    # process_group: the group across which to aggregate (usually DP group)
     process_group: dist.ProcessGroup,
 ) -> Union[int, Tuple[int]]:
 

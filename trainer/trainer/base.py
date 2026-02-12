@@ -1,6 +1,8 @@
+import pathlib
 from typing import Dict, Any, Sequence
 from omegaconf import OmegaConf, DictConfig
 import glob
+from loguru import logger
 import torch.distributed as dist
 import torch.distributed.checkpoint as dcp
 import wandb
@@ -21,17 +23,20 @@ class Trainer:
                 else None
             )
         if self.load_dir is not None:
+            load_path = pathlib.Path(self.load_dir)
             if hasattr(config, "actor"):
-                config.actor.model_name = f"{self.load_dir}/actor/model"
+                config.actor.model_name = str(load_path / "actor" / "model")
             if hasattr(config, "critic"):
-                config.critic.model_name = f"{self.load_dir}/critic/model"
+                config.critic.model_name = str(load_path / "critic" / "model")
             if hasattr(config, "rollout"):
-                config.rollout.server_args.model_path = f"{self.load_dir}/actor/model"
-
+                config.rollout.server_args.model_path = str(
+                    load_path / "actor" / "model"
+                )
+            self.load_dir = pathlib.Path(self.load_dir)
         self.config = config
 
         if dist.get_rank() == 0:
-            print(OmegaConf.to_yaml(config))
+            logger.info(f"Config: {OmegaConf.to_yaml(config)}")
             if config.trainer.use_wandb:
                 wandb.init(
                     project=config.trainer.project,
@@ -54,10 +59,10 @@ class Trainer:
             return 0
         for worker in workers:
             worker_name = "actor" if "Actor" in worker.__class__.__name__ else "critic"
-            worker.load_ckpt(f"{self.load_dir}/{worker_name}/optimizer_scheduler")
+            worker.load_ckpt(self.load_dir / worker_name / "optimizer_scheduler")
 
         ckpt = self._get_ckpt(0)
-        dcp.load(ckpt, checkpoint_id=f"{self.load_dir}/trainer")
+        dcp.load(ckpt, checkpoint_id=self.load_dir / "trainer")
         if dist.get_rank() == 0:
             self.train_dataloader.load_state_dict(ckpt["dataloader"])
         return ckpt["step"]
@@ -70,19 +75,19 @@ class Trainer:
         ):
             return
 
-        save_dir = f"{self.config.trainer.save_dir}/step{step}"
+        save_dir = self.config.trainer.save_dir / f"step{step}"
         for worker in workers:
             worker_name = "actor" if "Actor" in worker.__class__.__name__ else "critic"
-            worker.save_ckpt(f"{save_dir}/{worker_name}")
+            worker.save_ckpt(save_dir / worker_name)
 
-        dcp.save(self._get_ckpt(step), checkpoint_id=f"{save_dir}/trainer")
+        dcp.save(self._get_ckpt(step), checkpoint_id=save_dir / "trainer")
 
     def save_model(self, workers: Sequence[BaseWorker]):
 
         save_dir = self.config.trainer.save_dir
         if self.config.trainer.save_freq is not None:
-            save_dir += "/latest"
+            save_dir += "latest"
 
         for worker in workers:
             worker_name = "actor" if "Actor" in worker.__class__.__name__ else "critic"
-            worker.save_model(f"{save_dir}/{worker_name}")
+            worker.save_model(save_dir / worker_name)
