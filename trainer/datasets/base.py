@@ -38,6 +38,7 @@ def get_tensor_dict(
 ) -> Dict[str, torch.Tensor]:
 
     if not rm:
+        # Causal language model training requires shifting the states and actions by one token
         states = states[:-1]
         actions = actions[1:]
         action_mask = action_mask[1:]
@@ -49,10 +50,15 @@ def get_tensor_dict(
 
     tensor_dict = {
         "states": torch.LongTensor(states),
+        # eos_mask will be later helpful to batch together multiple steps and actions
+        # it pads different lengths of sequences to the same length
         "eos_mask": torch.LongTensor((len(states) - 1) * [0] + [1]),
+        # position_ids are used to identify the position of the tokens in the sequence
+        # It is helpful in context parallelism.
         "position_ids": torch.arange(len(states)),
     }
     if rm:
+        # only the EOS token gets action mask as 1
         tensor_dict["action_mask"] = torch.LongTensor(
             (len(states) - 1) * [0] + [1]
         )  # rewards of non-terminal tokens are zeros
