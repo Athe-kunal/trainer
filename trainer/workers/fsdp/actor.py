@@ -200,8 +200,8 @@ class FSDPActor(FSDPWorker):
                 torch.log1p(-torch.exp(chosen_logps).clamp(max=1 - self.config.eps))
                 - torch.log1p(-torch.exp(rejected_logps).clamp(max=1 - self.config.eps))
             )
-            odds_loss = -F.logsigmoid(log_odds).mean()
-            sft_loss = -chosen_logps.mean()
+            odds_loss = -F.logsigmoid(log_odds).sum() / total_pairs
+            sft_loss = -chosen_logps.sum() / total_pairs
             loss = sft_loss + self.config.lambda_orpo * odds_loss
             if train:
                 self._scale_loss(loss).backward()
