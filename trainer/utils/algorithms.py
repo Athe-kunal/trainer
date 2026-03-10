@@ -219,6 +219,44 @@ def dpo_loss(
     return losses, metric
 
 
+def apo_down_loss(
+    config: DictConfig, minibatch: Dict[str, torch.Tensor], suffix: str
+) -> Tuple[torch.Tensor, Dict[str, List[float]]]:
+
+    chosen_rewards, rejected_rewards = (
+        config.beta
+        * (minibatch["logps"] - minibatch["ref_logps"]).sum(-1).view(-1, 2).T
+    )
+    reward_margins = chosen_rewards - rejected_rewards
+    losses = torch.sigmoid(chosen_rewards) - torch.sigmoid(reward_margins)
+    metric = {
+        f"rewards/chosen/{suffix}": chosen_rewards.tolist(),
+        f"rewards/rejected/{suffix}": rejected_rewards.tolist(),
+        f"rewards/margin/{suffix}": reward_margins.tolist(),
+        f"accuracy/{suffix}": (reward_margins > 0).tolist(),
+    }
+    return losses, metric
+
+
+def apo_zero_loss(
+    config: DictConfig, minibatch: Dict[str, torch.Tensor], suffix: str
+) -> Tuple[torch.Tensor, Dict[str, List[float]]]:
+
+    chosen_rewards, rejected_rewards = (
+        config.beta
+        * (minibatch["logps"] - minibatch["ref_logps"]).sum(-1).view(-1, 2).T
+    )
+    reward_margins = chosen_rewards - rejected_rewards
+    losses = -torch.sigmoid(chosen_rewards) + torch.sigmoid(rejected_rewards)
+    metric = {
+        f"rewards/chosen/{suffix}": chosen_rewards.tolist(),
+        f"rewards/rejected/{suffix}": rejected_rewards.tolist(),
+        f"rewards/margin/{suffix}": reward_margins.tolist(),
+        f"accuracy/{suffix}": (reward_margins > 0).tolist(),
+    }
+    return losses, metric
+
+
 def grpo_loss(
     config: DictConfig, minibatch: Dict[str, torch.Tensor]
 ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:

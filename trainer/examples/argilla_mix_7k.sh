@@ -19,7 +19,7 @@ while [[ $# -gt 0 ]]; do
       ;;
     *)
       echo "Unknown argument: $1"
-      echo "Usage: $0 [--debug] [--algorithm dpo|orpo|simpo]"
+      echo "Usage: $0 [--debug] [--algorithm dpo|orpo|simpo|apo_zero|apo_down]"
       exit 1
       ;;
   esac
@@ -27,11 +27,11 @@ done
 
 # Validate algorithm
 case "$ALGO" in
-  dpo|orpo|simpo)
+  dpo|orpo|simpo|apo_zero|apo_down)
     ;;
   *)
     echo "Error: Unsupported algorithm '$ALGO'"
-    echo "Supported algorithms: dpo, orpo, simpo"
+    echo "Supported algorithms: dpo, orpo, simpo, apo_zero, apo_down"
     exit 1
     ;;
 esac
