@@ -272,15 +272,11 @@ def kto_loss(
     kl = response_logratios.mean().detach().clamp(min=0)
     rewards = config.beta * response_logratios.detach()
     reward_kl = config.beta * kl
-
-    desirable_weight = float(config.get("desirable_weight", 1.0))
-    undesirable_weight = float(config.get("undesirable_weight", 1.0))
-
     losses = torch.empty_like(response_logratios)
-    losses[desirable_mask] = desirable_weight * (
+    losses[desirable_mask] = config.desirable_weight * (
         1 - torch.sigmoid(config.beta * (response_logratios[desirable_mask] - kl))
     )
-    losses[undesirable_mask] = undesirable_weight * (
+    losses[undesirable_mask] = config.undesirable_weight * (
         1 - torch.sigmoid(config.beta * (kl - response_logratios[undesirable_mask]))
     )
 
