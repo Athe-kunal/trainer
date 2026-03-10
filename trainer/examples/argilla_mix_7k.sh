@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-NPROC_PER_NODE=2
+NPROC_PER_NODE=1
 ALGO="dpo"  # default
 
 # Parse arguments
