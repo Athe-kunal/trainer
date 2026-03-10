@@ -257,6 +257,49 @@ def apo_zero_loss(
     return losses, metric
 
 
+def kto_loss(
+    config: DictConfig, minibatch: Dict[str, torch.Tensor], suffix: str
+) -> Tuple[torch.Tensor, Dict[str, List[float]]]:
+    response_logps = minibatch["logps"].sum(-1)
+    response_lens = minibatch["action_mask"].sum(-1).clamp(min=1)
+    response_logps /= response_lens
+    ref_response_logps = minibatch["ref_logps"].sum(-1) / response_lens
+    response_logratios = response_logps - ref_response_logps
+
+    labels = minibatch["label"].reshape(minibatch["label"].shape[0], -1)[:, 0].bool()
+    desirable_mask = labels
+    undesirable_mask = ~labels
+    kl = response_logratios.mean().detach().clamp(min=0)
+    rewards = config.beta * response_logratios.detach()
+    reward_kl = config.beta * kl
+
+    desirable_weight = float(config.get("desirable_weight", 1.0))
+    undesirable_weight = float(config.get("undesirable_weight", 1.0))
+
+    losses = torch.empty_like(response_logratios)
+    losses[desirable_mask] = desirable_weight * (
+        1 - torch.sigmoid(config.beta * (response_logratios[desirable_mask] - kl))
+    )
+    losses[undesirable_mask] = undesirable_weight * (
+        1 - torch.sigmoid(config.beta * (kl - response_logratios[undesirable_mask]))
+    )
+
+    desirable_rewards = rewards[desirable_mask]
+    undesirable_rewards = rewards[undesirable_mask]
+    accuracy = torch.cat(
+        (desirable_rewards > reward_kl, undesirable_rewards < reward_kl), dim=0
+    ).tolist()
+    metric = {
+        f"accuracy/{suffix}": accuracy,
+        f"kl/{suffix}": [kl.item()],
+    }
+    if desirable_rewards.numel() > 0:
+        metric[f"rewards/chosen/{suffix}"] = desirable_rewards.tolist()
+    if undesirable_rewards.numel() > 0:
+        metric[f"rewards/rejected/{suffix}"] = undesirable_rewards.tolist()
+    return losses, metric
+
+
 def grpo_loss(
     config: DictConfig, minibatch: Dict[str, torch.Tensor]
 ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:

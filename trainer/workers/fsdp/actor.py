@@ -21,6 +21,7 @@ from trainer.utils.algorithms import (
     grpo_loss,
     orpo_loss,
     simpo_loss,
+    kto_loss,
 )
 from trainer.utils.logging import (
     progress_bar,
@@ -266,6 +267,41 @@ class FSDPActor(FSDPWorker):
                 minibatch = self._forward(minibatch)
             suffix = "train" if train else "test"
             losses, metric = orpo_loss(self.config, minibatch, suffix)
+            loss = losses.sum() / total_pairs
+            if train:
+                self._scale_loss(loss).backward()
+                idx += 1
+            metric[f"loss/{suffix}"] = [loss.item()]
+            for k, v in metric.items():
+                metrics[k].extend(v)
+
+        if train:
+            # Update optimizer after accumulating gradients
+            do_update = idx % self.config.grad_accumulation_steps == 0
+            grad_norm = self._optimizer_step(do_update)
+            if do_update:
+                idx = 0
+                metrics["grad_norm"].append(grad_norm)
+        gather_and_log(metrics, step, self.device_mesh["dp"].get_group())
+
+    @time_logger("update_actor")
+    def kto_step(
+        self, tensor_dict: Optional[Dict[str, torch.Tensor]], train: bool, step: int
+    ):
+        minibatches = self._scatter_data(tensor_dict, pair=True)
+        self.model.train(train)
+
+        total_pairs = (
+            count_total(minibatches, "eos_mask", self.device_mesh["dp"].get_group())
+            // 2
+        )
+        metrics = defaultdict(list)
+        idx = 0
+        for minibatch in progress_bar(minibatches, desc="KTO step"):
+            with torch.set_grad_enabled(train):
+                minibatch = self._forward(minibatch)
+            suffix = "train" if train else "test"
+            losses, metric = kto_loss(self.config, minibatch, suffix)
             loss = losses.sum() / total_pairs
             if train:
                 self._scale_loss(loss).backward()
