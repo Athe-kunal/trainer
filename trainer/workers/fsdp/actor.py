@@ -94,9 +94,6 @@ class FSDPActor(FSDPWorker):
         step: int,
         pair: bool = False,
     ) -> Optional[Dict[str, torch.Tensor]]:
-        # `labels` is a 1D [N] tensor (KTO); exclude it from scatter/gather
-        # which assumes all tensors are 2D [batch, seq_len].
-        labels = tensor_dict.pop("labels", None) if tensor_dict is not None else None
         minibatches = self._scatter_data(tensor_dict, pair=pair)
         self._load_model_to_device(torch.cuda.current_device())
 
@@ -109,10 +106,7 @@ class FSDPActor(FSDPWorker):
 
         if not self.train:
             self._load_model_to_device("cpu")
-        result = self._gather_data(processed_minibatches)
-        if labels is not None and result is not None:
-            result["labels"] = labels
-        return result
+        return self._gather_data(processed_minibatches)
 
     @time_logger("update_actor")
     def sft_step(

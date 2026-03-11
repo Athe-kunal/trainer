@@ -36,12 +36,16 @@ class KTOTrainer(Trainer):
                 initial=step % len(self.train_dataloader),
             ):
                 step += 1
+                labels = tensor_dict.pop("labels")
                 tensor_dict = self.ref_actor.compute_logps(tensor_dict, step, True)
+                tensor_dict["labels"] = labels
                 self.actor.kto_step(tensor_dict, True, step)
                 self.save_ckpt((self.actor,), step)
 
             for tensor_dict in self.test_dataloader:
+                labels = tensor_dict.pop("labels")
                 tensor_dict = self.ref_actor.compute_logps(tensor_dict, step, True)
+                tensor_dict["labels"] = labels
                 self.actor.kto_step(tensor_dict, False, step)
 
         self.save_model((self.actor,))
