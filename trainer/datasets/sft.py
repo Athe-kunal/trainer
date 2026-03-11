@@ -9,9 +9,6 @@ class SFTDataset(BaseDataset):
 
         sample = self.dataset[idx]
         messages = self.convert_to_messages(sample)
-        # if not self.dataset_config.messages_key:
-        #     tensor_dict = self._tokenize_prompt_response(messages, rm=False)
-        #     tensor_dicts = [tensor_dict]  # Wrap single dict in a list
         tensor_dicts = self._tokenize_messages(messages, rm=False)
         return tensor_dicts
 

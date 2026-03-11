@@ -155,6 +155,51 @@ def rm_loss(
     return losses, {f"accuracy/{suffix}": (reward_margins > 0).tolist()}
 
 
+def orpo_loss(
+    config: DictConfig, minibatch: Dict[str, torch.Tensor], suffix: str
+) -> Tuple[torch.Tensor, Dict[str, List[float]]]:
+
+    logps = minibatch["logps"]
+    chosen_logps = logps[0::2].sum(-1)
+    rejected_logps = logps[1::2].sum(-1)
+    chosen_lens = minibatch["action_mask"][0::2].sum(-1).clamp(min=1)
+    rejected_lens = minibatch["action_mask"][1::2].sum(-1).clamp(min=1)
+    chosen_logps = chosen_logps / chosen_lens
+    rejected_logps = rejected_logps / rejected_lens
+    log_odds = (chosen_logps - rejected_logps) - (
+        torch.log1p(-torch.exp(chosen_logps).clamp(max=1 - config.eps))
+        - torch.log1p(-torch.exp(rejected_logps).clamp(max=1 - config.eps))
+    )
+    odds_losses = -F.logsigmoid(log_odds)
+    sft_losses = -chosen_logps
+    losses = sft_losses + config.lambda_orpo * odds_losses
+    metric = {
+        f"sft_loss/{suffix}": sft_losses.tolist(),
+        f"odds_loss/{suffix}": odds_losses.tolist(),
+    }
+    return losses, metric
+
+
+def simpo_loss(
+    config: DictConfig, minibatch: Dict[str, torch.Tensor], suffix: str
+) -> Tuple[torch.Tensor, Dict[str, List[float]]]:
+
+    logps = minibatch["logps"]
+    response_lens = minibatch["action_mask"].sum(-1)
+    chosen_rewards, rejected_rewards = config.beta * (
+        (logps.sum(-1) / response_lens.clamp(min=1)).view(-1, 2).T
+    )
+    reward_margins = chosen_rewards - rejected_rewards
+    losses = -F.logsigmoid(reward_margins - config.gamma)
+    metric = {
+        f"rewards/chosen/{suffix}": chosen_rewards.tolist(),
+        f"rewards/rejected/{suffix}": rejected_rewards.tolist(),
+        f"rewards/margin/{suffix}": reward_margins.tolist(),
+        f"accuracy/{suffix}": (reward_margins > 0).tolist(),
+    }
+    return losses, metric
+
+
 def dpo_loss(
     config: DictConfig, minibatch: Dict[str, torch.Tensor], suffix: str
 ) -> Tuple[torch.Tensor, Dict[str, List[float]]]:
@@ -171,6 +216,83 @@ def dpo_loss(
         f"rewards/margin/{suffix}": reward_margins.tolist(),
         f"accuracy/{suffix}": (reward_margins > 0).tolist(),
     }
+    return losses, metric
+
+
+def apo_down_loss(
+    config: DictConfig, minibatch: Dict[str, torch.Tensor], suffix: str
+) -> Tuple[torch.Tensor, Dict[str, List[float]]]:
+
+    chosen_rewards, rejected_rewards = (
+        config.beta
+        * (minibatch["logps"] - minibatch["ref_logps"]).sum(-1).view(-1, 2).T
+    )
+    reward_margins = chosen_rewards - rejected_rewards
+    losses = torch.sigmoid(chosen_rewards) - torch.sigmoid(reward_margins)
+    metric = {
+        f"rewards/chosen/{suffix}": chosen_rewards.tolist(),
+        f"rewards/rejected/{suffix}": rejected_rewards.tolist(),
+        f"rewards/margin/{suffix}": reward_margins.tolist(),
+        f"accuracy/{suffix}": (reward_margins > 0).tolist(),
+    }
+    return losses, metric
+
+
+def apo_zero_loss(
+    config: DictConfig, minibatch: Dict[str, torch.Tensor], suffix: str
+) -> Tuple[torch.Tensor, Dict[str, List[float]]]:
+
+    chosen_rewards, rejected_rewards = (
+        config.beta
+        * (minibatch["logps"] - minibatch["ref_logps"]).sum(-1).view(-1, 2).T
+    )
+    reward_margins = chosen_rewards - rejected_rewards
+    losses = -torch.sigmoid(chosen_rewards) + torch.sigmoid(rejected_rewards)
+    metric = {
+        f"rewards/chosen/{suffix}": chosen_rewards.tolist(),
+        f"rewards/rejected/{suffix}": rejected_rewards.tolist(),
+        f"rewards/margin/{suffix}": reward_margins.tolist(),
+        f"accuracy/{suffix}": (reward_margins > 0).tolist(),
+    }
+    return losses, metric
+
+
+def kto_loss(
+    config: DictConfig, minibatch: Dict[str, torch.Tensor], suffix: str
+) -> Tuple[torch.Tensor, Dict[str, List[float]]]:
+    response_logps = minibatch["logps"].sum(-1)
+    response_lens = minibatch["action_mask"].sum(-1).clamp(min=1)
+    response_logps /= response_lens
+    ref_response_logps = minibatch["ref_logps"].sum(-1) / response_lens
+    response_logratios = response_logps - ref_response_logps
+
+    labels = minibatch["labels"].bool()
+    desirable_mask = labels
+    undesirable_mask = ~labels
+    kl = response_logratios.mean().detach().clamp(min=0)
+    rewards = config.beta * response_logratios.detach()
+    reward_kl = config.beta * kl
+    losses = torch.empty_like(response_logratios)
+    losses[desirable_mask] = config.desirable_weight * (
+        1 - torch.sigmoid(config.beta * (response_logratios[desirable_mask] - kl))
+    )
+    losses[undesirable_mask] = config.undesirable_weight * (
+        1 - torch.sigmoid(config.beta * (kl - response_logratios[undesirable_mask]))
+    )
+
+    desirable_rewards = rewards[desirable_mask]
+    undesirable_rewards = rewards[undesirable_mask]
+    accuracy = torch.cat(
+        (desirable_rewards > reward_kl, undesirable_rewards < reward_kl), dim=0
+    ).tolist()
+    metric = {
+        f"accuracy/{suffix}": accuracy,
+        f"kl/{suffix}": [kl.item()],
+    }
+    if desirable_rewards.numel() > 0:
+        metric[f"rewards/chosen/{suffix}"] = desirable_rewards.tolist()
+    if undesirable_rewards.numel() > 0:
+        metric[f"rewards/rejected/{suffix}"] = undesirable_rewards.tolist()
     return losses, metric
 
 

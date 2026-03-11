@@ -1,0 +1,42 @@
+defaults:
+- _self_
+- actor: fsdp
+- ref_actor: ${actor}
+
+data:
+  train:
+    path: null
+    max_length: null
+    batch_size: 128
+    system_prompt: null
+    prompt_key: prompt
+    response_key: response
+    messages_key: messages
+    label_column: desirable
+    apply_chat_template: true
+    train_on_what: [assistant]
+  test:
+    path: null
+    max_length: ${data.train.max_length}
+    system_prompt: ${data.train.system_prompt}
+    prompt_key: ${data.train.prompt_key}
+    response_key: ${data.train.response_key}
+    messages_key: ${data.train.messages_key}
+    label_column: ${data.train.label_column}
+    apply_chat_template: ${data.train.apply_chat_template}
+    train_on_what: ${data.train.train_on_what}
+  test_ratio: 0.03
+
+actor:
+  beta: 0.1
+  desirable_weight: 1.0
+  undesirable_weight: 1.0
+
+trainer:
+  project: null
+  experiment_name: null
+  load_ckpt_from: null
+  n_epochs: 1
+  save_dir: ckpts/${trainer.experiment_name}
+  save_freq: null
+  use_wandb: true

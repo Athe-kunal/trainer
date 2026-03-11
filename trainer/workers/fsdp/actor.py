@@ -1,5 +1,4 @@
-from typing import Dict, Optional, Tuple, List
-from loguru import logger
+from typing import Dict, Optional
 from omegaconf import DictConfig
 from collections import defaultdict
 import torch
@@ -15,8 +14,15 @@ from trainer.utils.functions import (
     compute_logps_and_entropy,
     aggregate_values,
 )
-from trainer.utils.algorithms import dpo_loss, grpo_loss
-import torch.nn.functional as F
+from trainer.utils.algorithms import (
+    dpo_loss,
+    apo_down_loss,
+    apo_zero_loss,
+    grpo_loss,
+    orpo_loss,
+    simpo_loss,
+    kto_loss,
+)
 from trainer.utils.logging import (
     progress_bar,
     time_logger,
@@ -174,6 +180,76 @@ class FSDPActor(FSDPWorker):
         gather_and_log(metrics, step, self.device_mesh["dp"].get_group())
 
     @time_logger("update_actor")
+    def apo_down_step(
+        self, tensor_dict: Optional[Dict[str, torch.Tensor]], train: bool, step: int
+    ):
+        minibatches = self._scatter_data(tensor_dict, pair=True)
+        self.model.train(train)
+
+        total_pairs = (
+            count_total(minibatches, "eos_mask", self.device_mesh["dp"].get_group())
+            // 2
+        )
+        metrics = defaultdict(list)
+        idx = 0
+        for minibatch in progress_bar(minibatches, desc="APO Down step"):
+            with torch.set_grad_enabled(train):
+                minibatch = self._forward(minibatch)
+            suffix = "train" if train else "test"
+            losses, metric = apo_down_loss(self.config, minibatch, suffix)
+            loss = losses.sum() / total_pairs
+            if train:
+                self._scale_loss(loss).backward()
+                idx += 1
+            metric[f"loss/{suffix}"] = [loss.item()]
+            for k, v in metric.items():
+                metrics[k].extend(v)
+
+        if train:
+            # Update optimizer after accumulating gradients
+            do_update = idx % self.config.grad_accumulation_steps == 0
+            grad_norm = self._optimizer_step(do_update)
+            if do_update:
+                idx = 0
+                metrics["grad_norm"].append(grad_norm)
+        gather_and_log(metrics, step, self.device_mesh["dp"].get_group())
+
+    @time_logger("update_actor")
+    def apo_zero_step(
+        self, tensor_dict: Optional[Dict[str, torch.Tensor]], train: bool, step: int
+    ):
+        minibatches = self._scatter_data(tensor_dict, pair=True)
+        self.model.train(train)
+
+        total_pairs = (
+            count_total(minibatches, "eos_mask", self.device_mesh["dp"].get_group())
+            // 2
+        )
+        metrics = defaultdict(list)
+        idx = 0
+        for minibatch in progress_bar(minibatches, desc="APO Zero step"):
+            with torch.set_grad_enabled(train):
+                minibatch = self._forward(minibatch)
+            suffix = "train" if train else "test"
+            losses, metric = apo_zero_loss(self.config, minibatch, suffix)
+            loss = losses.sum() / total_pairs
+            if train:
+                self._scale_loss(loss).backward()
+                idx += 1
+            metric[f"loss/{suffix}"] = [loss.item()]
+            for k, v in metric.items():
+                metrics[k].extend(v)
+
+        if train:
+            # Update optimizer after accumulating gradients
+            do_update = idx % self.config.grad_accumulation_steps == 0
+            grad_norm = self._optimizer_step(do_update)
+            if do_update:
+                idx = 0
+                metrics["grad_norm"].append(grad_norm)
+        gather_and_log(metrics, step, self.device_mesh["dp"].get_group())
+
+    @time_logger("update_actor")
     def orpo_step(
         self, tensor_dict: Optional[Dict[str, torch.Tensor]], train: bool, step: int
     ):
@@ -189,27 +265,52 @@ class FSDPActor(FSDPWorker):
         for minibatch in progress_bar(minibatches, desc="ORPO step"):
             with torch.set_grad_enabled(train):
                 minibatch = self._forward(minibatch)
-            logps = minibatch["logps"]
-            chosen_logps = logps[0::2].sum(-1)
-            rejected_logps = logps[1::2].sum(-1)
-            chosen_lens = minibatch["action_mask"][0::2].sum(-1).clamp(min=1)
-            rejected_lens = minibatch["action_mask"][1::2].sum(-1).clamp(min=1)
-            chosen_logps = chosen_logps / chosen_lens
-            rejected_logps = rejected_logps / rejected_lens
-            log_odds = (chosen_logps - rejected_logps) - (
-                torch.log1p(-torch.exp(chosen_logps).clamp(max=1 - self.config.eps))
-                - torch.log1p(-torch.exp(rejected_logps).clamp(max=1 - self.config.eps))
-            )
-            odds_loss = -F.logsigmoid(log_odds).mean()
-            sft_loss = -chosen_logps.mean()
-            loss = sft_loss + self.config.lambda_orpo * odds_loss
+            suffix = "train" if train else "test"
+            losses, metric = orpo_loss(self.config, minibatch, suffix)
+            loss = losses.sum() / total_pairs
             if train:
                 self._scale_loss(loss).backward()
                 idx += 1
+            metric[f"loss/{suffix}"] = [loss.item()]
+            for k, v in metric.items():
+                metrics[k].extend(v)
+
+        if train:
+            # Update optimizer after accumulating gradients
+            do_update = idx % self.config.grad_accumulation_steps == 0
+            grad_norm = self._optimizer_step(do_update)
+            if do_update:
+                idx = 0
+                metrics["grad_norm"].append(grad_norm)
+        gather_and_log(metrics, step, self.device_mesh["dp"].get_group())
+
+    @time_logger("update_actor")
+    def kto_step(
+        self, tensor_dict: Optional[Dict[str, torch.Tensor]], train: bool, step: int
+    ):
+        minibatches = self._scatter_data(tensor_dict, pair=True)
+        self.model.train(train)
+
+        total_pairs = (
+            count_total(minibatches, "eos_mask", self.device_mesh["dp"].get_group())
+            // 2
+        )
+        metrics = defaultdict(list)
+        idx = 0
+        for minibatch in progress_bar(minibatches, desc="KTO step"):
+            labels = minibatch.pop("labels")
+            with torch.set_grad_enabled(train):
+                minibatch = self._forward(minibatch)
+            minibatch["labels"] = labels
             suffix = "train" if train else "test"
-            metrics[f"sft_loss/{suffix}"].append(sft_loss.item())
-            metrics[f"odds_loss/{suffix}"].append(odds_loss.item())
-            metrics[f"loss/{suffix}"].append(loss.item())
+            losses, metric = kto_loss(self.config, minibatch, suffix)
+            loss = losses.sum() / total_pairs
+            if train:
+                self._scale_loss(loss).backward()
+                idx += 1
+            metric[f"loss/{suffix}"] = [loss.item()]
+            for k, v in metric.items():
+                metrics[k].extend(v)
 
         if train:
             # Update optimizer after accumulating gradients
@@ -236,22 +337,15 @@ class FSDPActor(FSDPWorker):
         for minibatch in progress_bar(minibatches, desc="SimPO step"):
             with torch.set_grad_enabled(train):
                 minibatch = self._forward(minibatch)
-            logps = minibatch["logps"]
-            response_lens = minibatch["action_mask"].sum(-1)
-            chosen_rewards, rejected_rewards = self.config.beta * (
-                ((logps).sum(-1) / response_lens.clamp(min=1)).view(-1, 2).T
-            )
-            reward_margins = chosen_rewards - rejected_rewards
-            loss = -F.logsigmoid(reward_margins - self.config.gamma).sum() / total_pairs
+            suffix = "train" if train else "test"
+            losses, metric = simpo_loss(self.config, minibatch, suffix)
+            loss = losses.sum() / total_pairs
             if train:
                 self._scale_loss(loss).backward()
                 idx += 1
-            suffix = "train" if train else "test"
-            metrics[f"rewards/chosen/{suffix}"].extend(chosen_rewards.tolist())
-            metrics[f"rewards/rejected/{suffix}"].extend(rejected_rewards.tolist())
-            metrics[f"rewards/margin/{suffix}"].extend(reward_margins.tolist())
-            metrics[f"loss/{suffix}"].append(loss.item())
-            metrics[f"accuracy/{suffix}"].extend((reward_margins > 0).tolist())
+            metric[f"loss/{suffix}"] = [loss.item()]
+            for k, v in metric.items():
+                metrics[k].extend(v)
 
         if train:
             # Update optimizer after accumulating gradients

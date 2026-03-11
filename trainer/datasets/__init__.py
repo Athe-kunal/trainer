@@ -1,5 +1,6 @@
 from .base import BaseDataset, get_dataloader, get_tensor_dict, pack_tensor_dicts
 from .sft import SFTDataset
+from .kto import KTODataset
 from .rm import RMDataset
 from .dpo import DPODataset
 from .rl import (
@@ -18,6 +19,9 @@ __all__ = [
     "get_tensor_dict",
     "pack_tensor_dicts",
     "SFTDataset",
+    "KTODataset",
+    "Sample",
+    "SampleGroup",
     "RMDataset",
     "DPODataset",
     "RLDataset",

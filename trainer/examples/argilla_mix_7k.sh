@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-NPROC_PER_NODE=2
+NPROC_PER_NODE=1
 ALGO="dpo"  # default
 
 # Parse arguments
@@ -19,7 +19,7 @@ while [[ $# -gt 0 ]]; do
       ;;
     *)
       echo "Unknown argument: $1"
-      echo "Usage: $0 [--debug] [--algorithm dpo|orpo|simpo]"
+      echo "Usage: $0 [--debug] [--algorithm dpo|orpo|simpo|apo_zero|apo_down|kto]"
       exit 1
       ;;
   esac
@@ -27,11 +27,11 @@ done
 
 # Validate algorithm
 case "$ALGO" in
-  dpo|orpo|simpo)
+  dpo|orpo|simpo|apo_zero|apo_down|kto)
     ;;
   *)
     echo "Error: Unsupported algorithm '$ALGO'"
-    echo "Supported algorithms: dpo, orpo, simpo"
+    echo "Supported algorithms: dpo, orpo, simpo, apo_zero, apo_down, kto"
     exit 1
     ;;
 esac
@@ -47,8 +47,8 @@ ARGS=(
   "data.train.system_prompt=You are a helpful assistant."
   data.train.apply_chat_template=true
   data.train.train_on_what=[assistant]
-  data.train.chosen_messages_key=chosen
-  data.train.rejected_messages_key=rejected
+  "+data.train.chosen_messages_key=chosen"
+  "+data.train.rejected_messages_key=rejected"
   actor.model_name=Qwen/Qwen2.5-1.5B-Instruct
   actor.max_length_per_device=4096
   actor.max_inference_length_per_device=4096
