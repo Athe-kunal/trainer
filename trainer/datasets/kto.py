@@ -1,36 +1,30 @@
-from typing import Dict, List
+from typing import Dict, List, Tuple
 import torch
 
-from trainer.datasets.sft import SFTDataset
+from trainer.datasets.dpo import DPODataset
+from trainer.datasets.base import pack_tensor_dicts
 
 
-class KTODataset(SFTDataset):
+class KTODataset(DPODataset):
 
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
+    def __getitem__(
+        self, idx: int
+    ) -> Tuple[Dict[str, torch.Tensor], Dict[str, torch.Tensor]]:
+        chosen, rejected = super().__getitem__(idx)
+        chosen["label"] = torch.tensor(1)
+        rejected["label"] = torch.tensor(0)
+        return chosen, rejected
 
-        label_column = self.dataset_config.get("label_column")
-        if not label_column:
-            raise ValueError(
-                "KTODataset requires `label_column` in the dataset config."
-            )
-        if label_column not in self.dataset.column_names:
-            raise ValueError(
-                f"KTODataset label_column `{label_column}` not found in dataset columns: "
-                f"{self.dataset.column_names}"
-            )
-
-    def __getitem__(self, idx: int) -> List[Dict[str, torch.Tensor]]:
-        tensor_dicts = super().__getitem__(idx)
-
-        label = self.dataset[idx][self.dataset_config.label_column]
-        if label not in (0, 1):
-            raise ValueError(
-                f"KTODataset expects labels in `{self.dataset_config.label_column}` "
-                f"to be 0 or 1, got {label!r}."
-            )
-
-        label_tensor = torch.LongTensor([int(label)])
-        for tensor_dict in tensor_dicts:
-            tensor_dict["label"] = label_tensor
-        return tensor_dicts
+    def collate_fn(
+        self, all_tensor_dicts: Tuple[Tuple[Dict[str, torch.Tensor]]]
+    ) -> Dict[str, torch.Tensor]:
+        tensor_dicts: List[Dict[str, torch.Tensor]] = [
+            td for tds in all_tensor_dicts for td in tds
+        ]
+        labels = torch.stack([td["label"] for td in tensor_dicts])
+        seq_dicts = [
+            {k: v for k, v in td.items() if k != "label"} for td in tensor_dicts
+        ]
+        batch = pack_tensor_dicts(seq_dicts)
+        batch["labels"] = labels
+        return batch

@@ -266,7 +266,7 @@ def kto_loss(
     ref_response_logps = minibatch["ref_logps"].sum(-1) / response_lens
     response_logratios = response_logps - ref_response_logps
 
-    labels = minibatch["label"].reshape(minibatch["label"].shape[0], -1)[:, 0].bool()
+    labels = minibatch["labels"].bool()
     desirable_mask = labels
     undesirable_mask = ~labels
     kl = response_logratios.mean().detach().clamp(min=0)

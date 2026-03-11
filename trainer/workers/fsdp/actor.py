@@ -94,6 +94,9 @@ class FSDPActor(FSDPWorker):
         step: int,
         pair: bool = False,
     ) -> Optional[Dict[str, torch.Tensor]]:
+        # `labels` is a 1D [N] tensor (KTO); exclude it from scatter/gather
+        # which assumes all tensors are 2D [batch, seq_len].
+        labels = tensor_dict.pop("labels", None) if tensor_dict is not None else None
         minibatches = self._scatter_data(tensor_dict, pair=pair)
         self._load_model_to_device(torch.cuda.current_device())
 
@@ -106,7 +109,10 @@ class FSDPActor(FSDPWorker):
 
         if not self.train:
             self._load_model_to_device("cpu")
-        return self._gather_data(processed_minibatches)
+        result = self._gather_data(processed_minibatches)
+        if labels is not None and result is not None:
+            result["labels"] = labels
+        return result
 
     @time_logger("update_actor")
     def sft_step(
@@ -298,8 +304,10 @@ class FSDPActor(FSDPWorker):
         metrics = defaultdict(list)
         idx = 0
         for minibatch in progress_bar(minibatches, desc="KTO step"):
+            labels = minibatch.pop("labels")
             with torch.set_grad_enabled(train):
                 minibatch = self._forward(minibatch)
+            minibatch["labels"] = labels
             suffix = "train" if train else "test"
             losses, metric = kto_loss(self.config, minibatch, suffix)
             loss = losses.sum() / total_pairs
