@@ -160,8 +160,10 @@ def orpo_loss(
 ) -> Tuple[torch.Tensor, Dict[str, List[float]]]:
 
     logps = minibatch["logps"]
+    # Sum along the sequence dimension so that it is [B x S]
     chosen_logps = logps[0::2].sum(-1)
     rejected_logps = logps[1::2].sum(-1)
+    # Length of completions
     chosen_lens = minibatch["action_mask"][0::2].sum(-1).clamp(min=1)
     rejected_lens = minibatch["action_mask"][1::2].sum(-1).clamp(min=1)
     chosen_logps = chosen_logps / chosen_lens
@@ -203,7 +205,9 @@ def simpo_loss(
 def dpo_loss(
     config: DictConfig, minibatch: Dict[str, torch.Tensor], suffix: str
 ) -> Tuple[torch.Tensor, Dict[str, List[float]]]:
-
+    # [chosen₁, rejected₁, chosen₂, rejected₂, ...] .view(-1,2)
+    # .view(-1,2).T -> [chosen₁, chosen₂, ...] and [rejected₁, rejected₂, ...] (2  x N)
+    # sum(-1) is token-level sum -> [B, S]
     chosen_rewards, rejected_rewards = (
         config.beta
         * (minibatch["logps"] - minibatch["ref_logps"]).sum(-1).view(-1, 2).T
