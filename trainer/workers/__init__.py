@@ -1,5 +1,7 @@
-from .base import BaseWorker
+from loguru import logger
 from omegaconf import DictConfig
+
+from .base import BaseWorker
 
 # Alias for backward compatibility
 Worker = BaseWorker
@@ -35,6 +37,19 @@ def initialize_critic(config: DictConfig):
 
 def initialize_rollout(config: DictConfig):
 
-    from .rollout import Rollout
+    backend = config.backend
+    model_name = config.server_args.model_path
+    logger.info(f"{backend=}, {model_name=}")
 
-    return Rollout(config)
+    if backend == "ipc":
+        from trainer.rollouts.rollout_ipc import IPCHttpRollout
+
+        return IPCHttpRollout(model_name)
+    elif backend == "nccl":
+        from trainer.rollouts.rollout_nccl import NCCLHttpRollout
+
+        return NCCLHttpRollout(model_name)
+    else:
+        raise NotImplementedError(
+            f"Unsupported rollout {backend=}. Expected one of: ipc, nccl"
+        )

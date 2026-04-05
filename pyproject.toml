@@ -3,7 +3,7 @@ name = "trainer"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.12,<3.13"
 dependencies = [
     "accelerate>=1.12.0",
     "configmate[standard]>=0.1.8",
@@ -20,23 +20,34 @@ dependencies = [
     "orjson>=3.11.5",
     "packaging>=25.0",
     "pyvene>=0.1.8",
+    "torch>=2.7,<2.8",
     "ray>=2.53.0",
     "ring-flash-attn==0.1.8",
     "torch-memory-saver>=0.0.9",
     "transformers>=4.57.5",
     "uvloop>=0.22.1",
-    "vllm>=0.10.0",
+    "vllm>=0.10.0,<0.10.2; sys_platform == 'linux' and platform_machine == 'x86_64'",
     "wandb>=0.24.2",
     "wheel>=0.46.3",
-    "flash-attn @ https://github.com/Dao-AILab/flash-attention/releases/download/v2.7.4.post1/flash_attn-2.7.4.post1+cu12torch2.6cxx11abiFALSE-cp312-cp312-linux_x86_64.whl",
+    "torchdata>=0.11.0",
+]
+
+[project.optional-dependencies]
+flash-attn = [
+    "flash-attn; sys_platform == 'linux' and platform_machine == 'x86_64'"
+]
+
+[tool.uv]
+environments = [
+    "sys_platform == 'linux' and platform_machine == 'x86_64' and python_full_version >= '3.12' and python_full_version < '3.13'",
 ]
 
 [tool.uv.sources]
-torch = { index = "pytorch-cu124" }
-torchvision = { index = "pytorch-cu124" }
-torchaudio = { index = "pytorch-cu124" }
+torch = { index = "pytorch-cu126" }
+torchvision = { index = "pytorch-cu126" }
+torchaudio = { index = "pytorch-cu126" }
 
 [[tool.uv.index]]
-name = "pytorch-cu124"
-url = "https://download.pytorch.org/whl/cu124"
+name = "pytorch-cu126"
+url = "https://download.pytorch.org/whl/cu126"
 explicit = true

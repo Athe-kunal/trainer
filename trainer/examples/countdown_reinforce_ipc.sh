@@ -1,7 +1,12 @@
 #!/usr/bin/env bash
+# Run the vLLM inference server first:
+#   make vllm-serve-ipc
+# Then run this script in a separate terminal.
 set -euo pipefail
 
 NPROC_PER_NODE=2
+MODEL=Qwen/Qwen2.5-0.5B-Instruct
+INFERENCE_TP_SIZE=2
 
 if [[ "${1-}" == "--debug" ]]; then
   export ENABLE_DEBUGPY=1
@@ -23,11 +28,11 @@ ARGS=(
   rollout.server_args.mem_fraction_static=0.6
   +rollout.server_args.cuda_graph_max_bs=16
   +rollout.server_args.dp_size=1
-  rollout.server_args.tp_size=2
-  actor.model_name=Qwen/Qwen2.5-1.5B-Instruct
+  rollout.server_args.tp_size="${INFERENCE_TP_SIZE}"
+  actor.model_name="${MODEL}"
   actor.max_length_per_device=8192
   trainer.project=Countdown
-  trainer.experiment_name=qwen2.5-1.5b_grpo_ipc
+  trainer.experiment_name=qwen2.5-0.5b_grpo_ipc
   trainer.total_steps=512
   trainer.test_freq=8
   "trainer.save_freq="
