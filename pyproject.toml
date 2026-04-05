@@ -20,21 +20,17 @@ dependencies = [
     "orjson>=3.11.5",
     "packaging>=25.0",
     "pyvene>=0.1.8",
-    "torch>=2.7,<2.8",
+    "torch>=2.10,<2.11",
     "ray>=2.53.0",
     "ring-flash-attn==0.1.8",
     "torch-memory-saver>=0.0.9",
     "transformers>=4.57.5",
     "uvloop>=0.22.1",
-    "vllm>=0.10.0,<0.10.2; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "vllm>=0.19.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
     "wandb>=0.24.2",
     "wheel>=0.46.3",
     "torchdata>=0.11.0",
-]
-
-[project.optional-dependencies]
-flash-attn = [
-    "flash-attn; sys_platform == 'linux' and platform_machine == 'x86_64'"
+    "flash-attn @ https://github.com/Dao-AILab/flash-attention/releases/download/v2.8.1/flash_attn-2.8.1+cu12torch2.10cxx11abiTRUE-cp312-cp312-linux_x86_64.whl; sys_platform == 'linux' and platform_machine == 'x86_64'",
 ]
 
 [tool.uv]
