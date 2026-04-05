@@ -2,16 +2,34 @@ import hydra
 from omegaconf import DictConfig
 import asyncio
 import torch.distributed as dist
+from loguru import logger
 from tqdm import trange
 from trainer.trainer.base import Trainer
 from trainer.trainer.utils import init_debugpy_if_enabled
 from trainer.workers import initialize_actor, initialize_critic, initialize_rollout
-from trainer.workers.rollout import shutdown_processes_when_exit
 from trainer.utils.communication import initialize_global_process_group, with_session
 from trainer.utils.algorithms import compute_advantages
 
 
-class PPOTrainer(Trainer):
+def resolve_rollout_backend(rollout_config: DictConfig) -> str:
+    """Maps rollout topology to vLLM weight-transfer backend."""
+    topology_to_backend = {
+        "colocate": "ipc",
+        "disaggregated": "nccl",
+    }
+    topology = rollout_config.topology
+    if topology not in topology_to_backend:
+        raise ValueError(
+            "rollout.topology must be one of: colocate, disaggregated. "
+            f"Received {topology=}"
+        )
+    backend = topology_to_backend[topology]
+    rollout_config.backend = backend
+    logger.info(f"{topology=}, {backend=}")
+    return backend
+
+
+class GRPOTrainer(Trainer):
 
     def __init__(self, config: DictConfig):
         super().__init__(config)
@@ -26,9 +44,9 @@ class PPOTrainer(Trainer):
                 self.critic = initialize_critic(config.critic)
                 self.critic.prepare_scheduler(self.config.trainer.total_steps)
 
+        resolve_rollout_backend(self.config.rollout)
         self.rollout = initialize_rollout(self.config.rollout)
 
-    @shutdown_processes_when_exit
     @with_session
     async def train(self):
 
@@ -93,12 +111,12 @@ class PPOTrainer(Trainer):
         return self.rollout.train_dataloader
 
 
-@hydra.main(config_path="config", config_name="ppo", version_base=None)
+@hydra.main(config_path="config", config_name="grpo", version_base=None)
 def main(config: DictConfig):
     init_debugpy_if_enabled()
     initialize_global_process_group(create_gloo_group=True, timeout_second=3000)
 
-    trainer = PPOTrainer(config)
+    trainer = GRPOTrainer(config)
     asyncio.run(trainer.train())
 
     dist.destroy_process_group()

@@ -24,6 +24,16 @@ actor:
     coef: 0.0
 
 rollout:
+  topology: colocate # `colocate` (IPC) or `disaggregated` (NCCL)
+  backend: ipc
+  vllm:
+    host: http://localhost:8000
+    server:
+      dev_mode: true
+      allow_insecure_serialization: true
+      enforce_eager: true
+      load_format: dummy
+      gpu_memory_utilization: 0.5
   server_args:
     model_path: ${actor.model_name}
     dtype: ${actor.dtype}

@@ -3,16 +3,15 @@ set -euo pipefail
 
 NPROC_PER_NODE=2
 
-# Check if --debug flag is passed
 if [[ "${1-}" == "--debug" ]]; then
   export ENABLE_DEBUGPY=1
   shift
-  echo "🐛 Debug mode enabled: All ranks will wait for debugger"
-  echo "   In VS Code: Press F5 and attach to each rank"
+  echo "🐛 Debug mode enabled: all ranks will wait for debugger."
+  echo "   In VS Code: press F5 and attach to each rank."
 fi
 
-# Common arguments (kept in one place for maintainability)
 ARGS=(
+  rollout.topology=colocate
   rollout.train.path=Jiayi-Pan/Countdown-Tasks-3to4
   "+rollout.train.kwargs={split: train}"
   rollout.train.prompts_per_rollout=128
@@ -28,7 +27,7 @@ ARGS=(
   actor.model_name=Qwen/Qwen2.5-1.5B-Instruct
   actor.max_length_per_device=8192
   trainer.project=Countdown
-  trainer.experiment_name=qwen2.5-1.5b_reinforce
+  trainer.experiment_name=qwen2.5-1.5b_grpo_ipc
   trainer.total_steps=512
   trainer.test_freq=8
   "trainer.save_freq="
@@ -38,8 +37,6 @@ ARGS=(
   trainer.use_wandb=false
 )
 
-# Use torchrun for both debug and non-debug modes
-# Debug is controlled via ENABLE_DEBUGPY environment variable
 uv run torchrun \
   --nproc_per_node="${NPROC_PER_NODE}" \
   -m trainer.trainer.grpo \
