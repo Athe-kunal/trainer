@@ -168,6 +168,7 @@ async def base_generate(
                     tokenize=False,
                 )
             else:
+                print(sample.sample)
                 sample.state_text = sample.sample[config.prompt_key]
 
             sample.state_dict = initialize_state_dict(tokenizer, sample.state_text)
@@ -272,7 +273,7 @@ class RLDataset(BaseDataset):
     def __getitem__(self, idx: int) -> SampleGroup:
 
         sample = self.dataset[idx]
-        return SampleGroup(self.config, self.tokenizer, sample)
+        return SampleGroup(self.dataset_config, self.tokenizer, sample)
 
     def collate_fn(self, batch: Tuple[SampleGroup]) -> SampleGroup:
         return batch[0]
