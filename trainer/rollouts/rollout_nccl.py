@@ -34,10 +34,11 @@ The example performs the following steps:
 """
 
 import threading
-from typing import cast
+from typing import Optional, cast
 
 import torch
 import torch.nn as nn
+from omegaconf import DictConfig
 from transformers import AutoModelForCausalLM
 
 from vllm.distributed.weight_transfer.nccl_engine import (
@@ -62,8 +63,12 @@ MODEL_NAME = "facebook/opt-125m"
 class NCCLHttpRollout(HttpRollout):
     """HTTP rollout with NCCL weight sync; establishes the NCCL group at init."""
 
-    def __init__(self, model_name: str = "facebook/opt-125m") -> None:
-        super().__init__(model_name)
+    def __init__(
+        self,
+        config: Optional[DictConfig] = None,
+        model_name: str = "facebook/opt-125m",
+    ) -> None:
+        super().__init__(config, model_name)
         self.inference_world_size = get_world_size(BASE_URL)
         world_size = self.inference_world_size + 1
         master_address = get_ip()
@@ -128,7 +133,7 @@ class NCCLHttpRollout(HttpRollout):
 
 
 def main():
-    rollout = NCCLHttpRollout(MODEL_NAME)
+    rollout = NCCLHttpRollout(model_name=MODEL_NAME)
     device = f"cuda:{rollout.inference_world_size}"
     torch.accelerator.set_device_index(device)
 

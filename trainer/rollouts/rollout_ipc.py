@@ -40,10 +40,11 @@ The example performs the following steps:
 """
 
 import os
-from typing import cast
+from typing import Optional, cast
 
 import torch
 import torch.nn as nn
+from omegaconf import DictConfig
 from transformers import AutoModelForCausalLM
 
 from vllm.distributed.weight_transfer.ipc_engine import (
@@ -65,8 +66,12 @@ os.environ["VLLM_ALLOW_INSECURE_SERIALIZATION"] = "1"
 
 
 class IPCHttpRollout(HttpRollout):
-    def __init__(self, model_name: str = "facebook/opt-125m") -> None:
-        super().__init__(model_name)
+    def __init__(
+        self,
+        config: Optional[DictConfig] = None,
+        model_name: str = "facebook/opt-125m",
+    ) -> None:
+        super().__init__(config, model_name)
         init_weight_transfer_engine(BASE_URL, backend="ipc")
 
     def sync_weights(self, trainer_model: nn.Module) -> None:
@@ -86,7 +91,7 @@ MODEL_NAME = "facebook/opt-125m"
 def main():
     # IPC requires the training model to be on the same GPU as the vLLM server.
     # Align `device` with the GPU where `vllm serve` is bound.
-    rollout = IPCHttpRollout(MODEL_NAME)
+    rollout = IPCHttpRollout(model_name=MODEL_NAME)
     device = "cuda:2"
     torch.accelerator.set_device_index(device)
 
