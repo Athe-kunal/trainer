@@ -44,11 +44,11 @@ def initialize_rollout(config: DictConfig):
     if backend == "ipc":
         from trainer.rollouts.rollout_ipc import IPCHttpRollout
 
-        return IPCHttpRollout(model_name)
+        return IPCHttpRollout(config, model_name)
     elif backend == "nccl":
         from trainer.rollouts.rollout_nccl import NCCLHttpRollout
 
-        return NCCLHttpRollout(model_name)
+        return NCCLHttpRollout(config, model_name)
     else:
         raise NotImplementedError(
             f"Unsupported rollout {backend=}. Expected one of: ipc, nccl"
