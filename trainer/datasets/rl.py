@@ -1,18 +1,20 @@
-from typing import Dict, Any, List, Callable, Tuple
-from omegaconf import OmegaConf, DictConfig
-import os
-import json
-import asyncio
-from enum import Enum
-from copy import deepcopy
 from collections import defaultdict
+from copy import deepcopy
 from dataclasses import dataclass, field
+from enum import Enum
+import asyncio
+import json
+import os
+from typing import Any, Callable, Dict, List, Tuple
+
+from loguru import logger
+from omegaconf import DictConfig, OmegaConf
 import torch
 from transformers import AutoTokenizer
-from trainer.datasets.base import get_tensor_dict, BaseDataset
-from trainer.utils.communication import async_request
 
 from trainer.datasets import base
+from trainer.datasets.base import BaseDataset, get_tensor_dict
+from trainer.utils.communication import async_request
 
 
 @dataclass
@@ -68,7 +70,7 @@ def initialize_state_dict(
     }
 
 
-def add_llm_response(sample: Sample, response: Dict[str, Any]):
+def add_llm_response(sample: Sample, response: Dict[str, Any]) -> None:
 
     # `previous_action_text` is non-empty if aborted before
     sample.action_text = sample.previous_action_text + response["text"]
@@ -92,11 +94,16 @@ def add_llm_response(sample: Sample, response: Dict[str, Any]):
         # actual rewards will be overwritten in `add_env_response`
 
     finish_reason = meta_info["finish_reason"]["type"]
+    logger.info(f"{finish_reason=}")
     if finish_reason == "abort":
         # User may mask action tokens to avoid off-policy training
         sample.status = Sample.Status.ABORTED
         sample.previous_action_text = sample.action_text
         sample.previous_response_length += meta_info["completion_tokens"]
+        logger.info(
+            f"{sample.status=}, {sample.previous_response_length=}, "
+            f"{sample.previous_action_text=}"
+        )
         return
 
     sample.turn += 1
@@ -112,7 +119,7 @@ def add_llm_response(sample: Sample, response: Dict[str, Any]):
 
 def add_env_response(
     tokenizer: AutoTokenizer, sample: Sample, response: Dict[str, Any]
-):
+) -> None:
 
     sample.state_dict["rewards"][-1] = response["reward"]
 
@@ -131,8 +138,8 @@ def add_env_response(
             tokenizer,
             response["next_state"][len(sample.state_text + sample.action_text) :],
         )
-        for k, v in state_dict_delta.items():
-            sample.state_dict[k].extend(v)
+        for key, value in state_dict_delta.items():
+            sample.state_dict[key].extend(value)
     else:
         # If the previous state is not a prefix of the next state, the trajectory will
         # contain multiple sequences
@@ -141,67 +148,91 @@ def add_env_response(
     sample.state_text = response["next_state"]
 
 
+def _get_initial_state_text(config: DictConfig, tokenizer: AutoTokenizer, sample: Sample) -> str:
+    if config.apply_chat_template:
+        return tokenizer.apply_chat_template(
+            sample.sample[config.messages_key],
+            add_generation_prompt=True,
+            tokenize=False,
+        )
+    return sample.sample[config.prompt_key]
+
+
+def _prepare_sample_for_generation(
+    config: DictConfig,
+    tokenizer: AutoTokenizer,
+    sample: Sample,
+) -> bool:
+    if sample.status == Sample.Status.DONE:
+        logger.info(f"{sample.status=}")
+        return False
+    if sample.status == Sample.Status.ABORTED:
+        sample.status = Sample.Status.RUNNING
+        logger.info(f"{sample.status=}")
+        return True
+
+    sample.state_text = _get_initial_state_text(config, tokenizer, sample)
+    sample.state_dict = initialize_state_dict(tokenizer, sample.state_text)
+    logger.info(f"{sample.status=}, {sample.state_text=}")
+    return True
+
+
+def _build_generate_request(
+    sampling_params: Dict[str, Any],
+    sample: Sample,
+) -> Dict[str, Any]:
+    max_new_tokens = sampling_params["max_new_tokens"] - sample.previous_response_length
+    request_payload = {
+        "input_ids": sample.state_dict["states"],
+        "sampling_params": {
+            **sampling_params,
+            "max_new_tokens": max_new_tokens,
+            "no_stop_trim": True,
+        },
+        "return_logprob": True,
+    }
+    logger.info(f"{max_new_tokens=}")
+    return request_payload
+
+
+async def _generate_one_turn(
+    router_url: str,
+    request_payload: Dict[str, Any],
+) -> Dict[str, Any]:
+    return await async_request(
+        router_url,
+        "generate",
+        json=request_payload,
+    )
+
+
 async def base_generate(
     config: DictConfig,
     tokenizer: AutoTokenizer,
     router_url: str,
     sample: Sample,
     env_step_fn: Callable,
-):
+) -> None:
     """
     A typical generate function where user only needs to provide the `env_step`
     function. User may provide their own `generate` function for advanced use.
     """
     sampling_params = OmegaConf.to_container(config.sampling_params)
+    logger.info(f"{router_url=}, {sample.status=}")
 
-    match sample.status:
-
-        case Sample.Status.RUNNING:
-
-            # For Gym-like environments, `reset` function should be called to
-            # obtain the initial state
-            if config.apply_chat_template:
-                # User may provide tools
-                sample.state_text = tokenizer.apply_chat_template(
-                    sample.sample[config.messages_key],
-                    add_generation_prompt=True,
-                    tokenize=False,
-                )
-            else:
-                print(sample.sample)
-                sample.state_text = sample.sample[config.prompt_key]
-
-            sample.state_dict = initialize_state_dict(tokenizer, sample.state_text)
-
-        case Sample.Status.ABORTED:
-            sample.status = Sample.Status.RUNNING
-
-        case Sample.Status.DONE:
-            # User may treat this case as `RUNNING` to avoid off-policy training
-            return
+    should_continue = _prepare_sample_for_generation(config, tokenizer, sample)
+    if not should_continue:
+        return
 
     while True:
-        # TODO: set `max_tokens`
-        response = await async_request(
-            router_url,
-            "generate",
-            json={
-                "input_ids": sample.state_dict["states"],
-                "sampling_params": {
-                    **sampling_params,
-                    "max_new_tokens": sampling_params["max_new_tokens"]
-                    - sample.previous_response_length,
-                    "no_stop_trim": True,
-                },
-                "return_logprob": True,
-            },
-        )
-        add_llm_response(sample, response)
+        request_payload = _build_generate_request(sampling_params, sample)
+        llm_response = await _generate_one_turn(router_url, request_payload)
+        add_llm_response(sample, llm_response)
         if sample.status == Sample.Status.ABORTED:
             return
 
-        response = await env_step_fn(sample)
-        add_env_response(tokenizer, sample, response)
+        env_response = await env_step_fn(sample)
+        add_env_response(tokenizer, sample, env_response)
         if sample.status == Sample.Status.DONE:
             return
 
@@ -263,8 +294,8 @@ class SampleGroup:
                 tensor_dict["rewards"] = torch.FloatTensor(state_dict["rewards"][1:])
                 tensor_dicts.append(tensor_dict)
             all_tensor_dicts.append(tensor_dicts)
-            for k, v in sample.metrics.items():
-                metrics[k].extend(v)
+            for key, value in sample.metrics.items():
+                metrics[key].extend(value)
         return all_tensor_dicts, metrics
 
 
